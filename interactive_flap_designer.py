@@ -729,10 +729,10 @@ class AirfoilFlapDesigner:
         
         x12, y12 = p['x12'], f_lower(p['x12'])
         x11 = x12 - p['DeltaX11']
-        x12_bis = x12 + 0.01
+        x12_bis = x12 + 0.00001
         y12_bis = f_lower(x12_bis)
         slope_y11 = np.arctan((y12_bis - y12) / (x12_bis - x12))
-        y11 = y12 + slope_y11 * (x12 - x11)
+        y11 = y12 - slope_y11 * (x12 - x11)
         
         self.flap_control_points = np.array([[x7, y7], [x8, y8], [x9, y9], [x10, y10], [x11, y11], [x12, y12]])
     
