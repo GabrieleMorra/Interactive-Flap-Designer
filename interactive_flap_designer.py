@@ -568,26 +568,17 @@ class AirfoilFlapDesigner:
             # DeltaX4
             p['DeltaX4'] = abs(x3 - x4)
             
-            # Delta_angolo: differenza tra angoli delle linee 2-3 e 3-4
+            # Delta_angolo: CORREZIONE QUI
             if x3 != x2 and x4 != x3:
-                # Calcola i vettori direzione
-                v1 = np.array([x3 - x2, y3 - y2])
-                v2 = np.array([x4 - x3, y4 - y3])
+                # Calcola angolo_3 come nel codice originale (generate_slot_control_points)
+                angolo_3 = 90 - 57.3 * np.arctan((y3 - y2) / (x3 - x2))
                 
-                # Normalizza i vettori
-                v1_norm = v1 / np.linalg.norm(v1)
-                v2_norm = v2 / np.linalg.norm(v2)
+                # Calcola angolo_tot dal vettore 3->4
+                slope_34 = (y4 - y3) / (x4 - x3)
+                angolo_tot = np.degrees(np.arctan(slope_34))
                 
-                # Calcola l'angolo usando il prodotto scalare (più robusto)
-                cos_angle = np.clip(np.dot(v1_norm, v2_norm), -1.0, 1.0)
-                angle_rad = np.arccos(cos_angle)
-                
-                # Determina il segno usando il prodotto vettoriale
-                cross_product = v1_norm[0] * v2_norm[1] - v1_norm[1] * v2_norm[0]
-                if cross_product < 0:
-                    angle_rad = -angle_rad
-                
-                p['Delta_angolo'] = np.degrees(angle_rad)
+                # Delta_angolo = angolo_3 - angolo_tot (come nella definizione originale)
+                p['Delta_angolo'] = angolo_3 - angolo_tot
             
             # Delta_Lip
             p['Delta_Lip'] = abs(x6 - x5)
@@ -621,7 +612,6 @@ class AirfoilFlapDesigner:
                     
         except Exception as e:
             self.status_label.config(text=f"Error updating parameters: {str(e)}")
-
 
     def load_airfoil(self):
         """Load airfoil data from file"""
