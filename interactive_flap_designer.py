@@ -10,10 +10,68 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import json
 import csv
+import pandas as pd
+import openpyxl
+from functools import partial
 
 class AirfoilFlapDesigner:
+
     def __init__(self, root):
+        """Initialize the Airfoil Flap Designer GUI"""
+
+        # Initialize pre-main window
         self.root = root
+        self.root.withdraw()  # Hide the root window initially
+
+        self.starting_window = tk.Toplevel(self.root)
+        self.starting_window.title("Interactive Airfoil Flap Designer")
+        self.starting_window.geometry("350x250")
+        self.starting_window.resizable(False, False)
+        
+        self.starting_window.protocol("WM_DELETE_WINDOW", self.quit_program)
+
+        # Variables
+        self.create_slat = tk.BooleanVar(value=True)
+        self.create_flap = tk.BooleanVar(value=True)
+        self.slat_type = tk.StringVar(value="None")
+        self.flap_type = tk.StringVar(value="Fowler")
+
+        flap_types = ["None", "Fowler"]
+        slat_types = ["None"]
+        
+        # Main frame
+        frame = ttk.Frame(self.starting_window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.flap_type = tk.StringVar()
+        self.slat_type = tk.StringVar()
+        
+        # Starting options
+        self.flap_label = ttk.Label(frame, text="Flap Type:", font=('Arial', 10, 'bold'))
+        self.flap_label.pack(anchor='w', pady=(20, 5))
+        flap_selection = ttk.Combobox(frame, width=30, values=flap_types, textvariable=self.flap_type, state='readonly')
+        flap_selection.set("Fowler")
+        flap_selection.pack(pady=(0, 30), anchor='w')
+        
+        self.slat_label = ttk.Label(frame, text="Slat Type:", font=('Arial', 10, 'bold'))
+        self.slat_label.pack(anchor='w', pady=(0, 5))
+        slat_selection = ttk.Combobox(frame, width=30, values=slat_types, textvariable=self.slat_type, state='readonly')
+        slat_selection.set("None")
+        slat_selection.pack(pady=(0, 10), anchor='w')
+
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x', pady=(30,0))
+
+        ttk.Button(btn_frame, text="Start Design", command=self.start_design).pack(side='right', padx=(0,0))
+
+    def quit_program(self):
+        self.root.destroy()
+
+    def start_design(self):
+        self.starting_window.destroy()  # Close the starting window
+        self.root.deiconify()  # Show the main window
         self.root.title("Interactive Airfoil Flap Designer")
         self.root.state('zoomed')
         
@@ -28,9 +86,9 @@ class AirfoilFlapDesigner:
         self.params = {
             'x1': 0.6, 'x2': 0.675, 'Delta_X1': 0.05, 'x3': 0.685, 'FractionY': 0.15,
             'DeltaX4': 0.02, 'Delta_angolo': 10, 'x6': 0.76, 'Delta_Lip': 0.045,
-            'DeltaTE_main': 0.004, 'TwistMain': 0.0, 'x7': 0.84, 'DeltaX9': 0.04,
+            'DeltaTE_main': 0.004, 'Twist Main': 0.0, 'x7': 0.84, 'DeltaX9': 0.04,
             'DeltaY9': 0.95, 'DeltaX10': 0.006, 'DeltaY10': -0.25, 'DeltaX11': 0.05,
-            'x12': 0.73, 'xh': 0.75, 'yh': -0.1, 'FlapDeflection': 0.0
+            'x12': 0.73, 'xh': 0.75, 'yh': -0.1, 'Flap Deflection': 0.0
         }
         
         # Control points and interactive elements
@@ -71,20 +129,17 @@ class AirfoilFlapDesigner:
         self.main_line = None
         self.flap_line = None
         
-        # # Preview window
-        # self.preview_window = None
+        self.setup_main_gui()
         
-        self.setup_gui()
-        
-    def setup_gui(self):
+    def setup_main_gui(self):
         # Create main frame with three sections
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Left panel for parameters
-        left_frame = ttk.Frame(main_frame, width=300)
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-        left_frame.pack_propagate(False)
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        left_frame.pack_propagate(True)
         
         # Right panel for plot
         right_frame = ttk.Frame(main_frame)
@@ -92,7 +147,6 @@ class AirfoilFlapDesigner:
         
         self.setup_parameter_panel(left_frame)
         self.setup_plot_panel(right_frame)
-
 
     def setup_parameter_panel(self, parent):
         # Title
@@ -107,12 +161,16 @@ class AirfoilFlapDesigner:
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
         canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        scrollbar.pack(side="right", fill="both")
         
         # Parameter controls
         self.param_vars = {}
@@ -121,7 +179,7 @@ class AirfoilFlapDesigner:
         groups = {
             "Main Shape": ['x1', 'x2', 'Delta_X1', 'x3', 'FractionY', 'DeltaX4', 'Delta_angolo', 'x6', 'Delta_Lip', 'DeltaTE_main'],
             "Flap Shape": ['x7', 'DeltaX9', 'DeltaY9', 'DeltaX10', 'DeltaY10', 'DeltaX11', 'x12'],
-            "Hinge & Deflection": ['xh', 'yh', 'FlapDeflection', 'TwistMain'],
+            "Hinge & Deflection": ['xh', 'yh', 'Flap Deflection', 'Twist Main'],
             "Flap Design": ['Gap', 'Overlap']
         }
         
@@ -135,15 +193,15 @@ class AirfoilFlapDesigner:
                     frame = ttk.Frame(group_frame)
                     frame.pack(fill=tk.X, pady=2)
                     
-                    ttk.Label(frame, text=f"{param}:", width=12).pack(side=tk.LEFT)
+                    ttk.Label(frame, text=f"{param}:", width=20).pack(side=tk.LEFT)
                     
                     var = tk.DoubleVar(value=self.params[param])
                     self.param_vars[param] = var
                     
-                    entry = ttk.Entry(frame, textvariable=var, width=10)
+                    entry = ttk.Entry(frame, textvariable=var, width=15)
                     entry.pack(side=tk.LEFT, padx=(5, 0))
-                    entry.bind('<Return>', lambda e, p=param: self.update_parameter(p))
-                    entry.bind('<FocusOut>', lambda e, p=param: self.update_parameter(p))
+                    entry.bind('<Return>', lambda e: self.update_paramenters())
+                    entry.bind('<FocusOut>', lambda e: self.update_paramenters())
 
         # Gap and Overlap display section (READ-ONLY)
         gap_overlap_frame = ttk.LabelFrame(scrollable_frame, text="Gap & Overlap (Read-only)", padding=5)
@@ -171,15 +229,14 @@ class AirfoilFlapDesigner:
         btn_frame = ttk.Frame(scrollable_frame)
         btn_frame.pack(fill=tk.X, pady=10)
         
-        ttk.Button(btn_frame, text="Update All", command=self.update_all_parameters).pack(fill=tk.X, pady=2)
-        # ttk.Button(btn_frame, text="Show Preview", command=self.show_flap_preview).pack(fill=tk.X, pady=2)
-        # ttk.Button(btn_frame, text="Export CSV", command=self.export_csv_dialog).pack(fill=tk.X, pady=2)
-        
+        ttk.Button(btn_frame, text="Update All", command=self.update_paramenters).pack(fill=tk.X, pady=2)
+
     def setup_plot_panel(self, parent):
         # Top control panel
         control_frame = ttk.Frame(parent)
         control_frame.pack(fill=tk.X, pady=(0, 5))
-        
+
+        ttk.Button(control_frame, text="Restart App", command=self.restart_code).pack(side=tk.LEFT, padx=2)
         ttk.Button(control_frame, text="Load Airfoil", command=self.load_airfoil).pack(side=tk.LEFT, padx=2)
         ttk.Button(control_frame, text="Reset View", command=self.reset_view).pack(side=tk.LEFT, padx=2)
         self.magnet_button = ttk.Button(control_frame, text="🧲 Snap", command=self.toggle_magnetic_snap)
@@ -233,7 +290,7 @@ class AirfoilFlapDesigner:
         
         # Creare punti interpolati ad alta densità
         t_original = np.linspace(0, 1, len(x_curve))
-        t_interp = np.linspace(0, 1, len(x_curve) * 20)  # 20x più punti
+        t_interp = np.linspace(0, 1, len(x_curve) * 50)  # 50x più punti
         
         from scipy.interpolate import interp1d
         f_x = interp1d(t_original, x_curve, kind='linear')
@@ -261,12 +318,14 @@ class AirfoilFlapDesigner:
         
         export_window = tk.Toplevel(self.root)
         export_window.title("Export Settings")
-        export_window.geometry("300x250")
+        export_window.geometry("300x330")
         export_window.resizable(False, False)
         
         # Variables
         self.export_main = tk.BooleanVar(value=True)
         self.export_flap = tk.BooleanVar(value=True)
+        self.export_slat = tk.BooleanVar(value=True)
+        self.slat_points = tk.IntVar(value=75)
         self.main_points = tk.IntVar(value=150)
         self.flap_points = tk.IntVar(value=75)
         
@@ -276,17 +335,44 @@ class AirfoilFlapDesigner:
         
         # Export options
         ttk.Label(frame, text="Export Options:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0,5))
+
+        self.file_type = tk.StringVar()
+        file_type = ttk.Combobox(frame, values=["CSV", "XLSX"], state='readonly', textvariable=self.file_type)
+        file_type.set("CSV")
+        file_type.pack(anchor='w', pady=(0, 20))
+
+        slat_check = ttk.Checkbutton(frame, text="Export Slat Component", variable=self.create_slat,
+                                    command=self.update_export_options)
+        slat_check.pack(anchor='w', pady=(0, 3))
+        if self.slat_type.get() == "None":
+            slat_check.config(state='disabled')
+            self.export_slat.set(False)
         
         main_check = ttk.Checkbutton(frame, text="Export Main Component", variable=self.export_main,
                                     command=self.update_export_options)
-        main_check.pack(anchor='w')
+        main_check.pack(anchor='w', pady=(0, 3))
         
         flap_check = ttk.Checkbutton(frame, text="Export Flap Component", variable=self.export_flap,
                                     command=self.update_export_options)
-        flap_check.pack(anchor='w', pady=(0,10))
+        flap_check.pack(anchor='w', pady=(0, 3))
+        if self.flap_type.get() == "None":
+            flap_check.config(state='disabled')
+            self.export_flap.set(False)
+
         
         # Points selection
         ttk.Label(frame, text="Number of Points:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(10,5))
+
+        # Slat points
+        slat_frame = ttk.Frame(frame)
+        slat_frame.pack(fill='x', pady=2)
+        self.slat_label = ttk.Label(slat_frame, text="Slat points:")
+        self.slat_label.pack(side='left')
+        self.slat_entry = ttk.Entry(slat_frame, textvariable=self.slat_points, width=8)
+        self.slat_entry.pack(side='right')
+        if self.slat_type.get() == "None":
+            self.slat_entry.config(state='disabled')
+            self.slat_label.config(foreground='gray')
         
         # Main points
         main_frame = ttk.Frame(frame)
@@ -303,6 +389,9 @@ class AirfoilFlapDesigner:
         self.flap_label.pack(side='left')
         self.flap_entry = ttk.Entry(flap_frame, textvariable=self.flap_points, width=8)
         self.flap_entry.pack(side='right')
+        if self.flap_type.get() == "None":
+            self.flap_entry.config(state='disabled')
+            self.flap_label.config(foreground='gray')
         
         # Buttons
         btn_frame = ttk.Frame(frame)
@@ -341,7 +430,6 @@ class AirfoilFlapDesigner:
             self.overlap_value = x_main_max - x_flap_min
             
             # === GAP CALCULATION ===
-            # Gap: distanza minima tra trailing edge del main e qualsiasi punto del flap
             min_distance = float('inf')
             
             # Calcola la distanza minima tra il trailing edge e tutti i punti del flap
@@ -350,15 +438,17 @@ class AirfoilFlapDesigner:
                                 (main_te_point[1] - flap_point[1])**2)
                 if distance < min_distance:
                     min_distance = distance
-            
+                # Se il punto è a x minori e y maggiori di un qualsiasi punto del main, considera gap -1
+                cond = np.logical_and(
+                    flap_point[0] < self.main_component[:, 0],
+                    flap_point[1] > self.main_component[:, 1]
+                )
+                if np.any(cond):
+                    min_distance = -1.0
+                    break
+
             self.gap_value = min_distance
             
-            # Se c'è overlap (flap avanza oltre il main), il gap potrebbe essere zero
-            # o molto piccolo se le superfici si sovrappongono
-            if self.overlap_value > 0:
-                # Verifica se c'è effettiva sovrapposizione geometrica
-                # che potrebbe rendere il gap praticamente zero
-                pass  # Il gap rimane quello calcolato come distanza minima
                 
         except Exception as e:
             print(f"Error calculating gap/overlap: {str(e)}")
@@ -368,7 +458,11 @@ class AirfoilFlapDesigner:
         # Update GUI variables
         if hasattr(self, 'gap_overlap_vars'):
             if 'gap' in self.gap_overlap_vars:
-                self.gap_overlap_vars['gap'].set(f"{self.gap_value:.6f}")
+                if self.gap_value < 0:
+                    self.gap_overlap_vars['gap'].set("Interference")
+                else:
+                    self.gap_overlap_vars['gap'].set(f"{self.gap_value:.6f}")
+
             if 'overlap' in self.gap_overlap_vars:
                 self.gap_overlap_vars['overlap'].set(f"{self.overlap_value:.6f}")
 
@@ -376,37 +470,114 @@ class AirfoilFlapDesigner:
         """Update export options based on checkboxes"""
         main_enabled = self.export_main.get()
         flap_enabled = self.export_flap.get()
+        slat_enabled = self.export_slat.get()
         
         # Enable/disable entries
         self.main_entry.config(state='normal' if main_enabled else 'disabled')
         self.flap_entry.config(state='normal' if flap_enabled else 'disabled')
+        self.slat_entry.config(state='normal' if slat_enabled else 'disabled')
         self.main_label.config(foreground='black' if main_enabled else 'gray')
         self.flap_label.config(foreground='black' if flap_enabled else 'gray')
+        self.slat_label.config(foreground='black' if slat_enabled else 'gray')
 
     def perform_export(self, export_window):
         """Perform the actual export"""
         if not self.export_main.get() and not self.export_flap.get():
             messagebox.showwarning("Warning", "Please select at least one component to export!")
             return
-        
-        filename = filedialog.asksaveasfilename(
-            title="Export to CSV",
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
-        )
+    
+        if self.file_type.get() == "CSV":
+            filename = filedialog.asksaveasfilename(
+                title="Export to CSV",
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+        elif self.file_type.get() == "XLSX":
+            filename = filedialog.asksaveasfilename(
+                title="Export to XLSX",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
         
         if filename:
             try:
-                self.export_to_csv(filename)
+                if self.file_type.get() == "XLSX":
+                    self.export_to_excel(filename)
+
+                elif self.file_type.get() == "CSV":
+                    self.export_to_csv(filename)
+
                 export_window.destroy()
                 self.status_label.config(text="Export completed successfully!")
+
             except Exception as e:
                 messagebox.showerror("Error", f"Export failed: {str(e)}")
+
+    def export_to_excel(self, filename):
+        """Export components to Excel file"""
+        data = {
+            'x': [],
+            'y': [],
+            'z': []
+        }
+
+        if self.export_slat.get():
+            slat_deflected = self.apply_slat_deflection()
+            slat_data = self.resample_component(slat_deflected, self.slat_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Slat coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(slat_data.shape[0]):
+                data['x'].append(slat_data[i, 0].tolist())
+                data['y'].append(slat_data[i, 1].tolist())
+                data['z'].append(0.0) 
+
+        if self.export_main.get():
+            main_data = self.resample_component(self.main_component, self.main_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Main coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(main_data.shape[0]):
+                data['x'].append(main_data[i, 0].tolist())
+                data['y'].append(main_data[i, 1].tolist())
+                data['z'].append(0.0) 
+
+        if self.export_flap.get():
+            flap_deflected = self.apply_flap_deflection()
+            flap_data = self.resample_component(flap_deflected, self.flap_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Flap coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(flap_data.shape[0]):
+                data['x'].append(flap_data[i, 0].tolist())
+                data['y'].append(flap_data[i, 1].tolist())
+                data['z'].append(0.0)
+        
+        
+        df = pd.DataFrame.from_dict(data, orient='index').transpose()
+        df.to_excel(filename, index=False, header=False)
 
     def export_to_csv(self, filename):
         """Export components to CSV file"""
         with open(filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile, delimiter=',')
+
+            if self.export_slat.get():
+                writer.writerow("")
+                writer.writerow(['Slat coords (x,y)'])
+                slat_deflected = self.apply_slat_deflection()
+                slat_deflected = self.resample_component(slat_deflected, self.slat_points.get())
+                for point in slat_deflected:
+                    writer.writerow([point[0], point[1], 0.0])
             
             if self.export_main.get():
                 writer.writerow("")
@@ -423,14 +594,17 @@ class AirfoilFlapDesigner:
                 for point in flap_data:
                     writer.writerow([point[0], point[1], 0.0])
 
+    def apply_slat_deflection(self):
+        return
+
     def apply_flap_deflection(self):
         """Apply rigid rotation to flap around hinge point"""
-        if self.flap_component is None or abs(self.params['FlapDeflection']) < 1e-6:
+        if self.flap_component is None or abs(self.params['Flap Deflection']) < 1e-6:
             return self.flap_component.copy() if self.flap_component is not None else None
         
         # Get hinge point and deflection angle
         xh, yh = self.params['xh'], self.params['yh']
-        delta = np.deg2rad(self.params['FlapDeflection'])  # Positive = nose down
+        delta = np.deg2rad(self.params['Flap Deflection'])  # Positive = nose down
         
         # Translate flap so hinge is at origin
         x_trans = self.flap_component[:, 0] - xh
@@ -474,24 +648,7 @@ class AirfoilFlapDesigner:
         resampled = np.column_stack([fx(t_new), fy(t_new)])
         return resampled
 
-    
-    def update_parameter(self, param_name):
-        """Update a single parameter and regenerate"""
-        try:
-            new_value = self.param_vars[param_name].get()
-            self.params[param_name] = new_value
-            
-            # Update corresponding control point if it exists
-            if param_name == 'xh' and self.hinge_point is not None:
-                self.hinge_point[0] = new_value
-            elif param_name == 'yh' and self.hinge_point is not None:
-                self.hinge_point[1] = new_value
-            
-            self.generate_flap()
-        except Exception as e:
-            self.status_label.config(text=f"Error updating {param_name}: {str(e)}")
-    
-    def update_all_parameters(self):
+    def update_paramenters(self):
         """Update all parameters and regenerate"""
         try:
             # Salva i limiti correnti
@@ -500,7 +657,22 @@ class AirfoilFlapDesigner:
             
             for param, var in self.param_vars.items():
                 self.params[param] = var.get()
-            self.generate_flap()
+            
+            if self.flap_type.get() != "None" and self.slat_type.get() != "None":
+                    self.status_label.config(text="Flap and Slat generated! Drag control points to modify")
+
+            elif self.flap_type.get() != "None" and self.slat_type.get() == "None":
+                self.generate_flap()
+                self.assemble_components()
+                self.plot_results()
+                self.status_label.config(text="Flap generated! Drag control points to modify")
+                self.calculate_gap_overlap()
+            
+            elif self.flap_type.get() == "None" and self.slat_type.get() != "None":
+                self.status_label.config(text="Slat generated! Drag control points to modify")
+            
+            elif self.flap_type.get() == "None" and self.slat_type.get() == "None":
+                self.status_label.config(text="Basic airfoil loaded successfully!")
             
             # Ripristina i limiti
             self.ax.set_xlim(current_xlim)
@@ -570,7 +742,7 @@ class AirfoilFlapDesigner:
             
             # Delta_angolo: CORREZIONE QUI
             if x3 != x2 and x4 != x3:
-                # Calcola angolo_3 come nel codice originale (generate_slot_control_points)
+                # Calcola angolo_3 come nel codice originale (generate_mainslot_control_points)
                 angolo_3 = 90 - 57.3 * np.arctan((y3 - y2) / (x3 - x2))
                 
                 # Calcola angolo_tot dal vettore 3->4
@@ -613,6 +785,11 @@ class AirfoilFlapDesigner:
         except Exception as e:
             self.status_label.config(text=f"Error updating parameters: {str(e)}")
 
+    def restart_code(self):
+        """Restart the application"""
+        self.root.destroy()
+        self.__init__(tk.Tk())
+
     def load_airfoil(self):
         """Load airfoil data from file"""
         filename = filedialog.askopenfilename(
@@ -625,8 +802,25 @@ class AirfoilFlapDesigner:
                 self.airfoil_data = np.loadtxt(filename)
                 self.split_airfoil()
                 self.plot_airfoil()
-                self.generate_flap()
-                self.status_label.config(text="Airfoil loaded successfully!")
+
+                if self.flap_type.get() != "None" and self.slat_type.get() != "None":
+                    self.status_label.config(text="Flap and Slat generated! Drag control points to modify")
+
+                elif self.flap_type.get() != "None" and self.slat_type.get() == "None":
+                    self.generate_flap()
+                    self.assemble_components()
+                    self.plot_results()
+                    self.status_label.config(text="Flap generated! Drag control points to modify")
+                    self.calculate_gap_overlap()
+                
+                elif self.flap_type.get() == "None" and self.slat_type.get() != "None":
+                    self.status_label.config(text="Slat generated! Drag control points to modify")
+                
+                elif self.flap_type.get() == "None" and self.slat_type.get() == "None":
+                    self.status_label.config(text="Basic airfoil loaded successfully!")
+
+                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Error loading airfoil: {str(e)}")
     
@@ -661,20 +855,15 @@ class AirfoilFlapDesigner:
             return
         
         try:
-            self.generate_slot_control_points()
+            self.generate_mainslot_control_points()
             self.generate_flap_control_points()
             self.hinge_point = np.array([self.params['xh'], self.params['yh']])
             self.slot_curve = self.bezier_curve(self.slot_control_points)
             self.flap_curve = self.bezier_curve(self.flap_control_points)
-            self.assemble_components()
-            self.plot_results()
-            self.status_label.config(text="Flap generated! Drag control points to modify")
-            self.calculate_gap_overlap()
         except Exception as e:
             self.status_label.config(text=f"Error generating flap: {str(e)}")
         
-    
-    def generate_slot_control_points(self):
+    def generate_mainslot_control_points(self):
         """Generate slot control points"""
         p = self.params
         f_upper = interp1d(self.x_upper, self.y_upper, kind='linear', bounds_error=False, fill_value='extrapolate')
@@ -749,8 +938,8 @@ class AirfoilFlapDesigner:
         main_x = np.concatenate([self.x_upper[ix6:], self.x_lower[:ix1], self.slot_curve[:, 0]])
         main_y = np.concatenate([self.y_upper[ix6:], self.y_lower[:ix1], self.slot_curve[:, 1]])
         
-        cos_twist = np.cos(np.deg2rad(p['TwistMain']))
-        sin_twist = np.sin(np.deg2rad(p['TwistMain']))
+        cos_twist = np.cos(np.deg2rad(p['Twist Main']))
+        sin_twist = np.sin(np.deg2rad(p['Twist Main']))
         self.main_component = np.column_stack([
             main_x * cos_twist - main_y * sin_twist,
             main_x * sin_twist + main_y * cos_twist
@@ -772,7 +961,7 @@ class AirfoilFlapDesigner:
         
         # Apply deflection
         xh, yh = p['xh'], p['yh']
-        delta = np.deg2rad(p['FlapDeflection'])
+        delta = np.deg2rad(p['Flap Deflection'])
         
         x_trans = self.flap_component[:, 0] - xh
         y_trans = self.flap_component[:, 1] - yh
@@ -797,7 +986,7 @@ class AirfoilFlapDesigner:
         self.canvas.draw()
     
     def plot_results(self):
-        """Plot results without deflected flap"""
+        """Plot results flap"""
         self.ax.clear()
         
         if self.airfoil_data is not None:
@@ -811,9 +1000,9 @@ class AirfoilFlapDesigner:
             self.flap_line = self.ax.plot(self.flap_component[:, 0], self.flap_component[:, 1], 'r--', linewidth=1.5, alpha=0.5, label='Flap (undeflected)')[0]
             
             # Plot deflected flap if deflection is not zero
-            if abs(self.params['FlapDeflection']) > 1e-6:
+            if abs(self.params['Flap Deflection']) > 1e-6:
                 deflected_flap = self.apply_flap_deflection()
-                self.deflected_flap_line = self.ax.plot(deflected_flap[:, 0], deflected_flap[:, 1], 'r-', linewidth=2.5, label=f'Flap (deflected {self.params["flap_deflection"]:.1f}°)')[0]
+                self.deflected_flap_line = self.ax.plot(deflected_flap[:, 0], deflected_flap[:, 1], 'r-', linewidth=2.5, label=f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')[0]
 
         if self.slot_curve is not None:
             self.slot_curve_line = self.ax.plot(self.slot_curve[:, 0], self.slot_curve[:, 1], 'b:', linewidth=1.5, alpha=0.7, label='Main Curve')[0]
@@ -935,20 +1124,20 @@ class AirfoilFlapDesigner:
                         line.set_data(x_data, y_data)
             
             # Update deflected flap line if it exists
-            if hasattr(self, 'deflected_flap_line') and abs(self.params['FlapDeflection']) > 1e-6:
+            if hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) > 1e-6:
                 deflected_flap = self.apply_flap_deflection()
                 self.deflected_flap_line.set_data(deflected_flap[:, 0], deflected_flap[:, 1])
                 # Update label
-                self.deflected_flap_line.set_label(f'Flap (deflected {self.params["flap_deflection"]:.1f}°)')
-            elif hasattr(self, 'deflected_flap_line') and abs(self.params['FlapDeflection']) <= 1e-6:
+                self.deflected_flap_line.set_label(f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')
+            elif hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) <= 1e-6:
                 # Remove deflected flap line if deflection is zero
                 self.deflected_flap_line.remove()
                 delattr(self, 'deflected_flap_line')
-            elif not hasattr(self, 'deflected_flap_line') and abs(self.params['FlapDeflection']) > 1e-6:
+            elif not hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) > 1e-6:
                 # Create deflected flap line if it doesn't exist
                 deflected_flap = self.apply_flap_deflection()
                 self.deflected_flap_line = self.ax.plot(deflected_flap[:, 0], deflected_flap[:, 1], 'r-', linewidth=2.5, 
-                                                    label=f'Flap (deflected {self.params["flap_deflection"]:.1f}°)')[0]
+                                                    label=f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')[0]
             
             # Update point annotations
             for i, ann in enumerate(self.point_annotations):
@@ -1084,7 +1273,6 @@ class AirfoilFlapDesigner:
 
             self.ax.set_xlim(new_xlim)
             self.ax.set_ylim(new_ylim)
-
 
     def on_mouse_release(self, event):
         """Handle mouse release"""
