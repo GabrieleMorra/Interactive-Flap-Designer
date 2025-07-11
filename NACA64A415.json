@@ -18,8 +18,8 @@
     "DeltaY10": -0.254139,
     "DeltaX11": 0.09559479202575538,
     "x12": 0.7585932395245168,
-    "xh": 0.730843,
-    "yh": -0.054819,
+    "xh_flap": 0.730843,
+    "yh_flap": -0.054819,
     "FlapDeflection": 0.0,
     "flap_deflect": 0.0,
     "flap_deflection": 0.0
