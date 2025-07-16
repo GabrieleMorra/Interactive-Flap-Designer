@@ -229,7 +229,11 @@ class AirfoilFlapDesigner:
             self.gap_overlap_vars['overlap'] = overlap_var
             overlap_entry = ttk.Entry(overlap_frame, textvariable=overlap_var, width=12, state='readonly')
             overlap_entry.pack(side=tk.LEFT, padx=(5, 0))
-        
+
+        # Aggiungi bottone per update
+        update_button = ttk.Button(details_frame, text="Update", command=self.update_parameters)
+        update_button.pack(fill=tk.X, pady=(20, 0))
+
         # Parameter description section
         desc_frame = ttk.LabelFrame(details_frame, text="Parameter Details", padding=5)
         desc_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 5))
@@ -475,15 +479,7 @@ class AirfoilFlapDesigner:
             self.param_desc_text.delete(1.0, tk.END)
             self.param_desc_text.insert(1.0, self.param_descriptions[param_name])
             self.param_desc_text.config(state='disabled')
-            
-            # Update value entry
-            if param_name in self.param_vars:
-                self.param_value_var.set(self.param_vars[param_name].get())
-                self.param_value_entry.config(state='normal')
-                self.current_param = param_name
-            else:
-                self.param_value_entry.config(state='disabled')
-                self.current_param = None
+    
         else:
             # Category selected
             category_name = self.param_tree.item(item, 'text')
@@ -492,7 +488,6 @@ class AirfoilFlapDesigner:
             self.param_desc_text.delete(1.0, tk.END)
             self.param_desc_text.insert(1.0, f"Select a parameter from the {category_name} category to edit its value.")
             self.param_desc_text.config(state='disabled')
-            self.param_value_entry.config(state='disabled')
             self.current_param = None
 
     def setup_plot_panel(self, parent):
@@ -940,7 +935,8 @@ class AirfoilFlapDesigner:
             current_xlim = self.ax.get_xlim()
             current_ylim = self.ax.get_ylim()
             
-            self.params[self.current_param] = float(self.param_value_entry.get())
+            if hasattr(self, 'edit_entry'):
+                self.params[self.current_param] = float(self.edit_entry.get())
 
             self.update_tree_parameters()
             
@@ -972,8 +968,10 @@ class AirfoilFlapDesigner:
                 self.status_label.config(text="Basic airfoil loaded successfully!")
                 self.assemble_components()
                 self.plot_results()
+
+            if  not hasattr(self, 'edit_entry'):
+                self.status_label.config(text="Manual update completed!")
                 
-            
             # Ripristina i limiti
             self.ax.set_xlim(current_xlim)
             self.ax.set_ylim(current_ylim)
