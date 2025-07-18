@@ -1,5 +1,8 @@
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
+import matplotlib.patches as patches
 from scipy.interpolate import interp1d
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -8,224 +11,155 @@ from matplotlib.figure import Figure
 import json
 import csv
 import pandas as pd
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
+import openpyxl
+from functools import partial
+from tkinter import simpledialog
 
-@dataclass
-class ComponentConfig:
-    """Configuration for flap and slat components"""
-    flap_type: str = "Single Slotted"
-    slat_type: str = "Kruger"
-    has_flap: bool = True
-    has_slat: bool = True
+class AirfoilFlapDesigner:
 
-class ParameterManager:
-    """Manages parameter definitions, descriptions, and validation"""
-    
-    def __init__(self):
-        self.default_params = {
-            'x1': 0.6, 'x2': 0.675, 'Delta_X1': 0.05, 'x3': 0.685, 'FractionY': 0.15,
-            'DeltaX4': 0.02, 'Delta_angolo': 10, 'x6': 0.76, 'Delta_Lip': 0.045,
-            'DeltaTE_main': 0.004, 'Twist Main': 0.0, 'x7': 0.84, 'DeltaX9': 0.04,
-            'DeltaY9': 0.95, 'DeltaX10': 0.006, 'DeltaY10': -0.25, 'DeltaX11': 0.05,
-            'x12': 0.73, 'xh_flap': 0.75, 'yh_flap': -0.1, 'Flap Deflection': 0.0,
-            'x13': 0.18, 'y13': 0.08, 'x14': 0.14, 'y14': 0.06, 'x15': 0.13, 'y15': 0.03,
-            'x16': 0.13, 'y16': 0.0, 'x17': 0.12, 'y17': -0.04, 'x18': 0.18, 'y18': -0.04,
-            'x19': 0.14, 'y19': -0.04, 'x20': 0.11, 'y20': -0.03, 'x21': 0.1, 'y21': -0.01,
-            'x22': 0.1, 'y22': 0.02, 'x23': 0.12, 'y23': 0.05, 'x24': 0.15, 'y24': 0.07,
-            'xh_slat': 0.08, 'yh_slat': -0.08, 'Slat Deflection': 0.0
-        }
-        
-        self.descriptions = {
-            'x1': 'First control point X coordinate for main airfoil upper surface',
-            'x2': 'Second control point X coordinate for main airfoil upper surface',
-            'Delta_X1': 'Delta X adjustment for first control point',
-            'x3': 'Third control point X coordinate for main airfoil',
-            'FractionY': 'Fraction of Y coordinate for airfoil shaping',
-            'DeltaX4': 'Delta X adjustment for fourth control point',
-            'Delta_angolo': 'Delta angle adjustment for airfoil curvature',
-            'x6': 'Sixth control point X coordinate',
-            'Delta_Lip': 'Delta adjustment for leading edge lip',
-            'DeltaTE_main': 'Delta trailing edge adjustment for main airfoil',
-            'Twist Main': 'Twist angle for main airfoil section',
-            'x7': 'Flap leading edge X coordinate',
-            'DeltaX9': 'Delta X adjustment for flap control point 9',
-            'DeltaY9': 'Delta Y adjustment for flap control point 9',
-            'DeltaX10': 'Delta X adjustment for flap control point 10',
-            'DeltaY10': 'Delta Y adjustment for flap control point 10',
-            'DeltaX11': 'Delta X adjustment for flap control point 11',
-            'x12': 'Flap trailing edge X coordinate',
-            'Gap': 'Gap distance between main airfoil and flap',
-            'Overlap': 'Overlap distance between main airfoil and flap',
-            'xh_flap': 'Flap hinge point X coordinate',
-            'yh_flap': 'Flap hinge point Y coordinate',
-            'Flap Deflection': 'Flap deflection angle in degrees',
-            'xh_slat': 'Slat hinge point X coordinate',
-            'yh_slat': 'Slat hinge point Y coordinate',
-            'Slat Deflection': 'Slat deflection angle in degrees'
-        }
-        
-        # Add slat parameter descriptions
-        for i in range(13, 25):
-            self.descriptions[f'x{i}'] = f'Slat control point {i} X coordinate'
-            self.descriptions[f'y{i}'] = f'Slat control point {i} Y coordinate'
-        
-        self.categories = {
-            'Main Slot Flap - Control Points': ['x1', 'x2', 'Delta_X1', 'x3', 'FractionY', 'DeltaX4', 'Delta_angolo', 'x6', 'Delta_Lip', 'DeltaTE_main'],
-            'Main Slot Slat - Control Points': [f'x{i}' for i in range(13, 19)] + [f'y{i}' for i in range(13, 19)],
-            'Twist Main': ['Twist Main'],
-            'Flap - Control Points': ['x7', 'DeltaX9', 'DeltaY9', 'DeltaX10', 'DeltaY10', 'DeltaX11', 'x12'],
-            'Flap - Hinge & Deflection': ['Gap', 'Overlap', 'xh_flap', 'yh_flap', 'Flap Deflection'],
-            'Slat - Control Points': [f'x{i}' for i in range(19, 25)] + [f'y{i}' for i in range(19, 25)],
-            'Slat - Hinge & Deflection': ['xh_slat', 'yh_slat', 'Slat Deflection']
-        }
+    def __init__(self, root):
+        """Initialize the Airfoil Flap Designer GUI"""
 
-class GeometryEngine:
-    """Handles geometric calculations and transformations"""
-    
-    @staticmethod
-    def bezier_curve(control_points: np.ndarray, n_points: int = 60) -> np.ndarray:
-        """Generate Bezier curve from control points"""
-        n = len(control_points) - 1
-        t = np.linspace(0, 1, n_points)
-        curve = np.zeros((n_points, 2))
-        
-        for i in range(n_points):
-            for j in range(n + 1):
-                binom_coeff = math.comb(n, j)
-                bernstein = binom_coeff * (t[i] ** j) * ((1 - t[i]) ** (n - j))
-                curve[i] += bernstein * control_points[j]
-        
-        return curve
-    
-    @staticmethod
-    def apply_rotation(points: np.ndarray, angle: float, center: np.ndarray) -> np.ndarray:
-        """Apply rotation around a center point"""
-        cos_a, sin_a = np.cos(angle), np.sin(angle)
-        translated = points - center
-        rotated = np.column_stack([
-            translated[:, 0] * cos_a - translated[:, 1] * sin_a,
-            translated[:, 0] * sin_a + translated[:, 1] * cos_a
-        ])
-        return rotated + center
-    
-    @staticmethod
-    def resample_curve(curve: np.ndarray, n_points: int) -> np.ndarray:
-        """Resample curve to specified number of points"""
-        if curve is None or len(curve) == 0:
-            return np.array([])
-        
-        # Find trailing edge and reorder
-        te_idx = np.argmax(curve[:, 0])
-        reordered = np.concatenate([curve[te_idx:], curve[:te_idx+1]])
-        
-        # Create parameter for interpolation
-        distances = np.concatenate([[0], np.cumsum(np.sqrt(np.diff(reordered[:, 0])**2 + np.diff(reordered[:, 1])**2))])
-        t_original = distances / distances[-1]
-        t_new = np.linspace(0, 1, n_points)
-        
-        # Interpolate
-        fx = interp1d(t_original, reordered[:, 0], kind='linear')
-        fy = interp1d(t_original, reordered[:, 1], kind='linear')
-        
-        return np.column_stack([fx(t_new), fy(t_new)])
-
-class AirfoilDesigner:
-    """Main application class"""
-    
-    def __init__(self, root: tk.Tk):
+        # Initialize pre-main window
         self.root = root
-        self.root.withdraw()
-        
-        # Initialize managers
-        self.param_manager = ParameterManager()
-        self.geometry_engine = GeometryEngine()
-        
-        # Initialize data structures
-        self.config = ComponentConfig()
-        self.params = self.param_manager.default_params.copy()
-        self.airfoil_data = None
-        self.f_upper = None
-        self.f_lower = None
-        
-        # Control points and curves
-        self.control_points = {}
-        self.curves = {}
-        self.components = {}
-        
-        # UI state
-        self.param_vars = {}
-        self.tree_item_to_param = {}
-        self.dragging_point = None
-        self.drag_offset = None
-        self.magnetic_snap = False
-        self.snap_tolerance = 0.0025
-        
-        # Gap/overlap tracking
-        self.gap_value = 0.0
-        self.overlap_value = 0.0
-        self.gap_overlap_vars = {}
-        
-        self.setup_startup_window()
-    
-    def setup_startup_window(self):
-        """Create and configure the startup window"""
+        self.root.withdraw()  # Hide the root window initially
+
         self.starting_window = tk.Toplevel(self.root)
         self.starting_window.title("Interactive Airfoil-Flap-Slat Designer")
         self.starting_window.geometry("350x250")
         self.starting_window.resizable(False, False)
+        
         self.starting_window.protocol("WM_DELETE_WINDOW", self.quit_program)
-        
-        frame = ttk.Frame(self.starting_window, padding=10)
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Component selection
-        self.setup_component_selection(frame)
-        
-        # Start button
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill='x', pady=(30, 0))
-        ttk.Button(btn_frame, text="Start Design", command=self.start_design).pack(side='right')
-    
-    def setup_component_selection(self, parent):
-        """Setup component selection interface"""
-        self.flap_type = tk.StringVar(value="Fowler")
-        self.slat_type = tk.StringVar(value="Kruger")
-        
-        flap_types = ["None", "Fowler"]
+
+        # Variables
+        self.create_slat = tk.BooleanVar(value=True)
+        self.create_flap = tk.BooleanVar(value=True)
+        self.slat_type = tk.StringVar(value="None")
+        self.flap_type = tk.StringVar(value="Single Slotted")
+
+        flap_types = ["None", "Single Slotted"]
         slat_types = ["None", "Kruger"]
         
-        # Flap selection
-        ttk.Label(parent, text="Flap Type:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(20, 5))
-        flap_combo = ttk.Combobox(parent, width=30, values=flap_types, textvariable=self.flap_type, state='readonly')
-        flap_combo.pack(pady=(0, 30), anchor='w')
+        # Main frame
+        frame = ttk.Frame(self.starting_window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        self.flap_type = tk.StringVar()
+        self.slat_type = tk.StringVar()
         
-        # Slat selection
-        ttk.Label(parent, text="Slat Type:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        slat_combo = ttk.Combobox(parent, width=30, values=slat_types, textvariable=self.slat_type, state='readonly')
-        slat_combo.pack(pady=(0, 10), anchor='w')
-    
+        # Starting options
+        self.flap_label = ttk.Label(frame, text="Flap Type:", font=('Arial', 10, 'bold'))
+        self.flap_label.pack(anchor='w', pady=(20, 5))
+        flap_selection = ttk.Combobox(frame, width=30, values=flap_types, textvariable=self.flap_type, state='readonly')
+        flap_selection.set("Single Slotted")
+        flap_selection.pack(pady=(0, 30), anchor='w')
+        
+        self.slat_label = ttk.Label(frame, text="Slat Type:", font=('Arial', 10, 'bold'))
+        self.slat_label.pack(anchor='w', pady=(0, 5))
+        slat_selection = ttk.Combobox(frame, width=30, values=slat_types, textvariable=self.slat_type, state='readonly')
+        slat_selection.set("Kruger")
+        slat_selection.pack(pady=(0, 10), anchor='w')
+
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x', pady=(30,0))
+
+        ttk.Button(btn_frame, text="Start Design", command=self.start_design).pack(side='right', padx=(0,0))
+
+    def quit_program(self):
+        self.root.destroy()
+
     def start_design(self):
-        """Start the main design interface"""
-        # Update configuration
-        self.config.has_flap = self.flap_type.get() != "None"
-        self.config.has_slat = self.slat_type.get() != "None"
-        self.config.flap_type = self.flap_type.get()
-        self.config.slat_type = self.slat_type.get()
-        
-        # Setup main window
-        self.starting_window.destroy()
-        self.root.deiconify()
+        self.starting_window.destroy()  # Close the starting window
+        self.root.deiconify()  # Show the main window
         self.root.title("Interactive Airfoil-Flap-Slat Designer")
         self.root.state('zoomed')
         
-        self.setup_main_interface()
+        # Initialize data
+        self.airfoil_data = None
+        self.x_upper = None
+        self.y_upper = None
+        self.x_lower = None
+        self.y_lower = None
+        
+        # Design parameters
+        self.params = {
+            'x1': 0.6, 'x2': 0.675, 'x3': 0.685, 'y3': 0.02, 'x4': 0.7, 'y4': 0.03,
+            'x5': 0.75, 'y5': 0.04, 'x6': 0.76, 'DeltaTE_main': 0.004, 
+
+            'Twist Main': 0.0, 
+
+            'x7': 0.84, 'x8': 0.76, 'x9': 0.7, 'y9': 0.052, 'x10': 0.69, 'y10': 0.016, 'x11': 0.68,
+            'x12': 0.73, 'xh_flap': 0.75, 'yh_flap': -0.1, 'Flap Deflection': 0.0,
+            
+            'x13': 0.18, 'x14': 0.14, 'x15': 0.13, 'y15': 0.03,
+            'x16': 0.13, 'y16': 0.0, 'x17': 0.12, 'x18': 0.18,
+
+            'x19': 0.14, 'x20': 0.11, 'x21': 0.10, 'y21': -0.01,
+            'x22': 0.10, 'y22': 0.02, 'x23': 0.12, 'y23': 0.03, 'x24': 0.15, 'y24': 0.035,
+            'xh_slat': 0.08, 'yh_slat': -0.08, 'Slat Deflection': 0.0
+        }
+        
+        # Control points and interactive elements
+        self.main_slot_flap_control_points = None
+        self.flap_control_points = None
+        self.flap_hinge_point = None
+        self.main_slot_flap_artists = []
+        self.flap_artists = []
+        self.flap_hinge_artist = None
+
+        self.point_annotations = []
+        self.dragging_point = None
+        self.drag_offset = None
+
+        self.main_slot_slat_control_points = None
+        self.slat_control_points = None
+        self.slat_hinge_point = None
+        self.main_slot_slat_artists = []
+        self.slat_artists = []
+        self.slat_hinge_artist = None
+
+        # Panning 
+        self.is_panning = False
+        self.pan_start = None
+        self.pan_xlim = None
+        self.pan_ylim = None
+        
+        # Magnetic snap
+        self.magnetic_snap = False  
+        self.snap_tolerance = 0.0025
+
+        # Flap Info calculations
+        self.gap_value = 0.0
+        self.overlap_value = 0.0
+        self.cf_c = 0.0
+        self.cs_c = 0.0
+        self.flap_info_vars = {}
+
+        # Results
+        self.main_component = None
+        self.flap_component = None
+        self.main_slot_flap_curve = None
+        self.main_slot_slat_curve = None
+        self.flap_curve = None
+        
+        # Plot elements
+        self.main_slot_flap_curve_line = None
+        self.main_slot_slat_curve_line = None
+        self.flap_curve_line = None
+        self.main_line = None
+        self.flap_line = None
+        self.slat_line = None
+        
+        self.setup_main_gui()
     
-    def setup_main_interface(self):
-        """Setup the main design interface"""
+    def setup_main_gui(self):
+        # Create main frame
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
+        # Create PanedWindow
         paned_window = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
         paned_window.pack(fill=tk.BOTH, expand=True)
         
@@ -237,154 +171,353 @@ class AirfoilDesigner:
         right_frame = ttk.Frame(paned_window)
         paned_window.add(right_frame)
         
+        left_frame.pack_propagate(True)
+        
         self.setup_parameter_panel(left_frame)
         self.setup_plot_panel(right_frame)
-    
+
     def setup_parameter_panel(self, parent):
-        """Setup parameter control panel"""
+        # Title
         ttk.Label(parent, text="Parameters", font=('Arial', 12, 'bold')).pack(pady=(0, 10))
         
+        # Main container - single column layout
         main_container = ttk.Frame(parent)
         main_container.pack(fill=tk.BOTH, expand=True)
-        
+
         paned_window = ttk.PanedWindow(main_container, orient=tk.VERTICAL)
         paned_window.pack(fill=tk.BOTH, expand=True)
         
-        # Parameter tree
+        # Top half - TreeView
         tree_frame = ttk.Frame(paned_window)
         paned_window.add(tree_frame, weight=3)
         
-        self.setup_parameter_tree(tree_frame)
-        
-        # Parameter details
-        details_frame = ttk.Frame(paned_window)
-        paned_window.add(details_frame, weight=1)
-        
-        self.setup_parameter_details(details_frame)
-    
-    def setup_parameter_tree(self, parent):
-        """Setup parameter tree view"""
-        tree_scroll = ttk.Scrollbar(parent)
+        # TreeView with scrollbar
+        tree_scroll = ttk.Scrollbar(tree_frame)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.param_tree = ttk.Treeview(parent, yscrollcommand=tree_scroll.set, selectmode='extended')
+        self.param_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set, selectmode='extended')
         self.param_tree.pack(fill=tk.BOTH, expand=True)
         tree_scroll.config(command=self.param_tree.yview)
+        self.param_tree.bind('<Double-1>', self.on_tree_double_click)
         
-        # Configure columns
+        # Configure TreeView columns
         self.param_tree['columns'] = ('Value',)
         self.param_tree.column('#0', width=200, minwidth=150)
         self.param_tree.column('Value', width=100, minwidth=80)
+        
         self.param_tree.heading('#0', text='Parameter', anchor=tk.W)
         self.param_tree.heading('Value', text='Value', anchor=tk.CENTER)
         
-        # Bind events
-        self.param_tree.bind('<Double-1>', self.on_tree_double_click)
+        # Bottom half - Parameter details and editor
+        details_frame = ttk.Frame(main_container)
+        paned_window.add(details_frame, weight=1)
+
+        if self.flap_type.get() != "None" or self.slat_type.get() != "None":
+
+            if self.flap_type.get() != "None":
+                # Gap and Overlap display section
+                flap_info_frame = ttk.LabelFrame(details_frame, text="Flap\Slat info (Read-only)", padding=5)
+                flap_info_frame.pack(fill=tk.X, pady=(10, 0))
+                
+                # Gap display
+                gap_frame = ttk.Frame(flap_info_frame)
+                gap_frame.pack(fill=tk.X, pady=2)
+                ttk.Label(gap_frame, text="Gap:", width=8).pack(side=tk.LEFT)
+                gap_var = tk.StringVar(value="0.000000")
+                self.flap_info_vars = {'gap': gap_var}
+                gap_entry = ttk.Entry(gap_frame, textvariable=gap_var, width=12, state='readonly')
+                gap_entry.pack(side=tk.LEFT, padx=(5, 0))
+                
+                # Overlap display
+                overlap_frame = ttk.Frame(flap_info_frame)
+                overlap_frame.pack(fill=tk.X, pady=2)
+                ttk.Label(overlap_frame, text="Overlap:", width=8).pack(side=tk.LEFT)
+                overlap_var = tk.StringVar(value="0.000000")
+                self.flap_info_vars['overlap'] = overlap_var
+                overlap_entry = ttk.Entry(overlap_frame, textvariable=overlap_var, width=12, state='readonly')
+                overlap_entry.pack(side=tk.LEFT, padx=(5, 0))
+
+                # cf_c display
+                cf_c_frame = ttk.Frame(flap_info_frame)
+                cf_c_frame.pack(fill=tk.X, pady=2)
+                ttk.Label(cf_c_frame, text="Cf/c:", width=8).pack(side=tk.LEFT)
+                cf_c = tk.StringVar(value="0.000000")
+                self.flap_info_vars['cf_c'] = cf_c
+                overlap_entry = ttk.Entry(cf_c_frame, textvariable=cf_c, width=12, state='readonly')
+                overlap_entry.pack(side=tk.LEFT, padx=(5, 0))
+
+            if self.slat_type.get() != "None":
+                # cs_c display
+                cs_c_frame = ttk.Frame(flap_info_frame)
+                cs_c_frame.pack(fill=tk.X, pady=2)
+                ttk.Label(cs_c_frame, text="Cs/c:", width=8).pack(side=tk.LEFT)
+                cs_c = tk.StringVar(value="0.000000")
+                self.flap_info_vars['cs_c'] = cs_c
+                cs_c_entry = ttk.Entry(cs_c_frame, textvariable=cs_c, width=12, state='readonly')
+                cs_c_entry.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Update button
+        update_button = ttk.Button(details_frame, text="Update", command=self.update_parameters)
+        update_button.pack(fill=tk.X, pady=(20, 0))
+
+        # Parameter description section
+        desc_frame = ttk.LabelFrame(details_frame, text="Parameter Details", padding=5)
+        desc_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 5))
+        
+        # Parameter name
+        self.param_name_label = ttk.Label(desc_frame, text="Select a parameter", font=('Arial', 10, 'bold'))
+        self.param_name_label.pack(anchor=tk.W)
+        
+        # Parameter description
+        self.param_desc_text = tk.Text(desc_frame, height=10, width=40, wrap=tk.WORD, state='disabled')
+        self.param_desc_text.pack(fill=tk.X, pady=(5, 0))
+        
+        # Initialize parameter data
+        self.init_parameter_tree()
+        
+        # Bind tree selection event
         self.param_tree.bind('<<TreeviewSelect>>', self.on_tree_select)
+
+    def on_tree_double_click(self, event):
+        """Handle double-click on tree items to edit parameter value inline"""
+        item = self.param_tree.selection()[0] if self.param_tree.selection() else None
+        if not item:
+            return
         
-        self.populate_parameter_tree()
-    
-    def populate_parameter_tree(self):
-        """Populate the parameter tree with current configuration"""
-        # Filter categories based on configuration
-        active_categories = self.param_manager.categories.copy()
+        # Check if it's a parameter (not a category)
+        if item not in self.tree_item_to_param:
+            return
         
-        if not self.config.has_flap:
-            active_categories.pop('Main Slot Flap - Control Points', None)
-            active_categories.pop('Flap - Control Points', None)
-            active_categories.pop('Flap - Hinge & Deflection', None)
+        # Get the bounding box of the Value column
+        bbox = self.param_tree.bbox(item, 'Value')
+        if not bbox:
+            return
         
-        if not self.config.has_slat:
-            active_categories.pop('Main Slot Slat - Control Points', None)
-            active_categories.pop('Slat - Control Points', None)
-            active_categories.pop('Slat - Hinge & Deflection', None)
+        param_name = self.tree_item_to_param[item]
+        current_value = self.param_vars[param_name].get()
+        
+        # Create an Entry widget positioned over the cell
+        self.edit_var = tk.DoubleVar(value=current_value)
+        self.edit_entry = ttk.Entry(self.param_tree, textvariable=self.edit_var, width=10)
+        
+        # Position the entry over the cell
+        self.edit_entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
+        
+        # Select all text and focus
+        self.edit_entry.select_range(0, tk.END)
+        self.edit_entry.focus()
+        
+        # Store current editing info
+        self.editing_item = item
+        self.editing_param = param_name
+        
+        # Bind events to finish editing
+        self.edit_entry.bind('<Return>', self.finish_edit)
+        self.edit_entry.bind('<Escape>', self.cancel_edit)
+        self.edit_entry.bind('<FocusOut>', self.finish_edit)
+
+    def finish_edit(self, event=None):
+        """Finish editing and update the parameter"""
+        if not hasattr(self, 'edit_entry'):
+            return
+        
+        try:
+            new_value = self.edit_var.get()
+            
+            # Update the parameter
+            self.param_vars[self.editing_param].set(new_value)
+            self.params[self.editing_param] = new_value
+            
+            # Update tree display
+            self.param_tree.set(self.editing_item, 'Value', f'{new_value:.6f}')
+            
+            # Update the entry field if this parameter is currently selected
+            if hasattr(self, 'current_param') and self.current_param == self.editing_param:
+                self.param_value_var.set(new_value)
+            
+            # Update the plot/calculation
+            self.update_parameters()
+            
+        except tk.TclError:
+            pass  # Invalid value, ignore
+        
+        # Clean up
+        self.cancel_edit()
+
+    def cancel_edit(self, event=None):
+        """Cancel editing and remove the entry widget"""
+        if hasattr(self, 'edit_entry'):
+            self.edit_entry.destroy()
+            del self.edit_entry
+            del self.edit_var
+            del self.editing_item
+            del self.editing_param
+        
+    def init_parameter_tree(self):
+        """Initialize the parameter tree with categories and parameters"""
+        
+        # Parameter descriptions
+        self.param_descriptions = {
+            'x1': 'Slot start X coordinate on lower surface (Y automatically calculated)',
+            'x2': 'Second control point X coordinate on lower surface (Y automatically calculated)',
+            'x3': 'Third control point X coordinate',
+            'y3': 'Third control point Y coordinate',
+            'x4': 'Fourth control point X coordinate',
+            'y4': 'Fourth control point Y coordinate',
+            'x5': 'Fifth control point X coordinate',
+            'y5': 'Fifth control point Y coordinate',
+            'x6': 'Sixth control point X coordinate',
+            'DeltaTE_main': 'Delta trailing edge adjustment for main airfoil',
+            'Twist Main': 'Twist angle for main airfoil section',
+            'x7': 'Flap leading edge X coordinate on upper surface (Y automatically calculated)',
+            'x9': 'Flap control point 9 X coordinate',
+            'y9': 'Flap control point 9 Y coordinate',
+            'x10': 'Flap control point 10 X coordinate',
+            'y10': 'Flap control point 10 Y coordinate',
+            'x11': 'Flap control point 11 X coordinate',
+            'y11': 'Flap control point 11 Y coordinate',
+            'x12': 'Flap trailing edge X coordinate on lower surface (Y automatically calculated)',
+            'Gap': 'Gap distance between main airfoil and flap',
+            'Overlap': 'Overlap distance between main airfoil and flap',
+            'xh_flap': 'Flap hinge point X coordinate',
+            'yh_flap': 'Flap hinge point Y coordinate',
+            'Flap Deflection': 'Flap deflection angle in degrees',
+            'xh_slat': 'Slat hinge point X coordinate',
+            'yh_slat': 'Slat hinge point Y coordinate',
+            'Slat Deflection': 'Slat deflection angle in degrees'
+        }
+        
+        # Add slat parameters descriptions
+        for i in range(13, 25):
+            self.param_descriptions[f'x{i}'] = f'Slat control point {i} X coordinate'
+            self.param_descriptions[f'y{i}'] = f'Slat control point {i} Y coordinate'
+        
+        # Parameter categories
+        tree_categories = {
+            'Main Slot Flap - Control Points': ['x1', 'x2', 'x3', 'y3', 'x4', 'y4', 'x5', 'y5', 'x6', 'DeltaTE_main'],
+            'Main Slot Slat - Control Points': [f'x{i}' for i in range(13, 19)] + [f'y{i}' for i in range(13, 19)],
+            'Twist Main': ['Twist Main'],
+            'Flap - Control Points': ['x7', 'y7', 'x8', 'y8', 'x9', 'y9', 'x10', 'y10', 'x11', 'y11', 'x12'],
+            'Flap - Hinge & Defletion': ['Gap', 'Overlap', 'xh_flap', 'yh_flap', 'Flap Deflection'],
+            'Slat - Control Points': [f'x{i}' for i in range(19, 25)] + [f'y{i}' for i in range(19, 25)],
+            'Slat - Hinge & Defletion': ['xh_slat', 'yh_slat', 'Slat Deflection']
+        }
+
+        if self.flap_type.get() == "None":
+            del tree_categories['Main Slot Flap - Control Points']
+            del tree_categories['Flap - Control Points']
+            del tree_categories['Flap - Hinge & Defletion']
+        if self.slat_type.get() == "None":
+            del tree_categories['Main Slot Slat - Control Points']
+            del tree_categories['Slat - Control Points']
+            del tree_categories['Slat - Hinge & Defletion']
+        
+        # Store parameter variables and tree item mapping
+        self.param_vars = {}
+        self.tree_item_to_param = {}  # Map tree items to parameter names
         
         # Populate tree
-        for category, params in active_categories.items():
+        for category, params in tree_categories.items():
+            # Create category node
             category_node = self.param_tree.insert('', 'end', text=category, values=('',))
             
+            # Add parameters to category
             for param in params:
                 if param in self.params:
                     value = self.params[param]
                     self.param_vars[param] = tk.DoubleVar(value=value)
                     param_node = self.param_tree.insert(category_node, 'end', text=param, 
-                                                      values=(f'{value:.6f}',))
+                                                    values=(f'{value:.6f}',))
+                    # Store parameter name mapping
                     self.tree_item_to_param[param_node] = param
         
-        # Collapse all categories
+        # Expand all categories by default - CHANGED TO COLLAPSED
         for item in self.param_tree.get_children():
-            self.param_tree.item(item, open=False)
+            self.param_tree.item(item, open=False)  # Keep categories collapsed
+
+    def update_tree_parameter(self):
+        """Update the parameter tree with new value for a given parameter"""
+        selection = self.param_tree.selection()
+        if not selection:
+            return
+        
+        param_name = selection[0]
+        new_value = self.param_value_var.get()
+
+        for item_id in self.tree_item_to_param.items():
+            if item_id[0] == param_name:
+                self.param_tree.set(item_id[0], 'Value', f'{new_value:.6f}')
+                break
+
+    def update_tree_parameters(self):
+        """Update all tree parameters with current values"""
+        for item_id, param_name in self.tree_item_to_param.items():
+            if param_name in self.param_vars:
+                value = self.params[param_name]
+                self.param_vars[param_name].set(value)
+                self.param_tree.set(item_id, 'Value', f'{value:.6f}')
+            else:
+                # If parameter is not in current vars, set to empty
+                self.param_tree.set(item_id, 'Value', '')
+
+        if hasattr(self, 'current_param'):
+            if self.current_param is not None:
+                self.param_value_var.set(self.params[self.current_param])
+            
+
+    def on_tree_select(self, event):
+        """Handle tree selection to show parameter details"""
+        selection = self.param_tree.selection()
+        if not selection:
+            return
+        
+        item = selection[0]
+        
+        # Check if it's a parameter (has mapping in tree_item_to_param)
+        if item in self.tree_item_to_param:
+            param_name = self.tree_item_to_param[item]
+            
+            # Update parameter name label
+            self.param_name_label.config(text=f"Parameter: {param_name}")
+            
+            # Update description
+            self.param_desc_text.config(state='normal')
+            self.param_desc_text.delete(1.0, tk.END)
+            self.param_desc_text.insert(1.0, self.param_descriptions[param_name])
+            self.param_desc_text.config(state='disabled')
     
-    def setup_parameter_details(self, parent):
-        """Setup parameter details and editor"""
-        if self.config.has_flap:
-            self.setup_gap_overlap_display(parent)
-        
-        # Update button
-        ttk.Button(parent, text="Update", command=self.update_parameters).pack(fill=tk.X, pady=(20, 0))
-        
-        # Parameter description
-        desc_frame = ttk.LabelFrame(parent, text="Parameter Details", padding=5)
-        desc_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(0, 5))
-        
-        self.param_name_label = ttk.Label(desc_frame, text="Select a parameter", font=('Arial', 10, 'bold'))
-        self.param_name_label.pack(anchor=tk.W)
-        
-        self.param_desc_text = tk.Text(desc_frame, height=10, width=40, wrap=tk.WORD, state='disabled')
-        self.param_desc_text.pack(fill=tk.X, pady=(5, 0))
-    
-    def setup_gap_overlap_display(self, parent):
-        """Setup gap and overlap display"""
-        gap_overlap_frame = ttk.LabelFrame(parent, text="Gap & Overlap (Read-only)", padding=5)
-        gap_overlap_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        # Gap display
-        gap_frame = ttk.Frame(gap_overlap_frame)
-        gap_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(gap_frame, text="Gap:", width=8).pack(side=tk.LEFT)
-        gap_var = tk.StringVar(value="0.000000")
-        self.gap_overlap_vars['gap'] = gap_var
-        ttk.Entry(gap_frame, textvariable=gap_var, width=12, state='readonly').pack(side=tk.LEFT, padx=(5, 0))
-        
-        # Overlap display
-        overlap_frame = ttk.Frame(gap_overlap_frame)
-        overlap_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(overlap_frame, text="Overlap:", width=8).pack(side=tk.LEFT)
-        overlap_var = tk.StringVar(value="0.000000")
-        self.gap_overlap_vars['overlap'] = overlap_var
-        ttk.Entry(overlap_frame, textvariable=overlap_var, width=12, state='readonly').pack(side=tk.LEFT, padx=(5, 0))
-    
+        else:
+            # Category selected
+            category_name = self.param_tree.item(item, 'text')
+            self.param_name_label.config(text=f"Category: {category_name}")
+            self.param_desc_text.config(state='normal')
+            self.param_desc_text.delete(1.0, tk.END)
+            self.param_desc_text.insert(1.0, f"Select a parameter from the {category_name} category to edit its value.")
+            self.param_desc_text.config(state='disabled')
+            self.current_param = None
+
     def setup_plot_panel(self, parent):
-        """Setup the plot panel"""
-        # Control buttons
+        # Top control panel
         control_frame = ttk.Frame(parent)
         control_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        buttons = [
-            ("Restart App", self.restart_app),
-            ("Load Airfoil", self.load_airfoil),
-            ("Reset View", self.reset_view),
-            ("Save Config", self.save_config),
-            ("Load Config", self.load_config),
-            ("Export", self.export_data)
-        ]
-        
-        for text, command in buttons:
-            ttk.Button(control_frame, text=text, command=command).pack(side=tk.LEFT, padx=2)
-        
-        # Magnetic snap button
+
+        ttk.Button(control_frame, text="Restart App", command=self.restart_code).pack(side=tk.LEFT, padx=2)
+        ttk.Button(control_frame, text="Load Airfoil", command=self.load_airfoil).pack(side=tk.LEFT, padx=2)
+        ttk.Button(control_frame, text="Reset View", command=self.reset_view).pack(side=tk.LEFT, padx=2)
         self.magnet_button = ttk.Button(control_frame, text="🧲 Snap", command=self.toggle_magnetic_snap)
         self.magnet_button.pack(side=tk.LEFT, padx=2)
+        self.magnet_style = ttk.Style()
+
+        ttk.Button(control_frame, text="Save Config", command=self.save_parameters).pack(side=tk.LEFT, padx=2)
+        ttk.Button(control_frame, text="Load Config", command=self.load_parameters).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(control_frame, text="Export", command=self.export_dialog).pack(side=tk.LEFT, padx=2)
+
         
-        # Status label
-        self.status_label = ttk.Label(control_frame, text="Load an airfoil to begin")
+        self.status_label = ttk.Label(control_frame, text="Drag control points to modify shape")
         self.status_label.pack(side=tk.RIGHT, padx=10)
         
-        # Plot area
-        self.setup_plot_area(parent)
-    
-    def setup_plot_area(self, parent):
-        """Setup the matplotlib plot area"""
+        # Plot frame
         plot_frame = ttk.Frame(parent)
         plot_frame.pack(fill=tk.BOTH, expand=True)
         
@@ -398,7 +531,595 @@ class AirfoilDesigner:
         self.canvas.mpl_connect('button_release_event', self.on_mouse_release)
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         self.canvas.mpl_connect("scroll_event", self.on_mouse_scroll)
+
+    def toggle_magnetic_snap(self):
+        """Toggle magnetic snap on/off"""
+        self.magnetic_snap = not self.magnetic_snap
+        if self.magnetic_snap:
+            self.magnet_style.configure("Active.TButton", background="lightgreen")
+            self.magnet_button.config(style="Active.TButton")
+            self.status_label.config(text="Magnetic snap ON - Points will snap to original airfoil")
+            self.magnet_button.config(text="🧲 Snap ON")
+        else:
+            self.magnet_button.config(style="TButton")
+            self.status_label.config(text="Magnetic snap OFF")
+            self.magnet_button.config(text="🧲 Snap OFF")
+
+    def find_nearest_airfoil_point(self, x, y):
+        """Find nearest point on original airfoil curve (interpolated)"""
+        if self.airfoil_data is None:
+            return x, y
+        
+        x_curve = self.airfoil_data[:, 0]
+        y_curve = self.airfoil_data[:, 1]
+        
+        t_original = np.linspace(0, 1, len(x_curve))
+        t_interp = np.linspace(0, 1, len(x_curve) * 50)
+        
+        from scipy.interpolate import interp1d
+        f_x = interp1d(t_original, x_curve, kind='linear')
+        f_y = interp1d(t_original, y_curve, kind='linear')
+        
+        x_interp = f_x(t_interp)
+        y_interp = f_y(t_interp)
+        
+        distances = np.sqrt((x_interp - x)**2 + (y_interp - y)**2)
+        min_dist_idx = np.argmin(distances)
+        min_distance = distances[min_dist_idx]
+        
+        if min_distance < self.snap_tolerance:
+            return x_interp[min_dist_idx], y_interp[min_dist_idx]
+        else:
+            return x, y
+        
+    def export_dialog(self):
+        """Open export dialog window"""
+        if self.main_component is None:
+            messagebox.showwarning("Warning", "No data to export. Please generate a flap first!")
+            return
+        
+        export_window = tk.Toplevel(self.root)
+        export_window.title("Export Settings")
+        export_window.geometry("300x330")
+        export_window.resizable(False, False)
+        
+        # Variables
+        self.export_main = tk.BooleanVar(value=True)
+        self.export_flap = tk.BooleanVar(value=True)
+        self.export_slat = tk.BooleanVar(value=True)
+        self.slat_points = tk.IntVar(value=75)
+        self.main_points = tk.IntVar(value=150)
+        self.flap_points = tk.IntVar(value=75)
+        
+        # Main frame
+        frame = ttk.Frame(export_window, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Export options
+        ttk.Label(frame, text="Export Options:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0,5))
+
+        self.file_type = tk.StringVar()
+        file_type = ttk.Combobox(frame, values=["CSV", "XLSX"], state='readonly', textvariable=self.file_type)
+        file_type.set("CSV")
+        file_type.pack(anchor='w', pady=(0, 20))
+
+        slat_check = ttk.Checkbutton(frame, text="Export Slat Component", variable=self.create_slat,
+                                    command=self.update_export_options)
+        slat_check.pack(anchor='w', pady=(0, 3))
+        if self.slat_type.get() == "None":
+            slat_check.config(state='disabled')
+            self.export_slat.set(False)
+        
+        main_check = ttk.Checkbutton(frame, text="Export Main Component", variable=self.export_main,
+                                    command=self.update_export_options)
+        main_check.pack(anchor='w', pady=(0, 3))
+        
+        flap_check = ttk.Checkbutton(frame, text="Export Flap Component", variable=self.export_flap,
+                                    command=self.update_export_options)
+        flap_check.pack(anchor='w', pady=(0, 3))
+        if self.flap_type.get() == "None":
+            flap_check.config(state='disabled')
+            self.export_flap.set(False)
+
+        
+        # Points selection
+        ttk.Label(frame, text="Number of Points:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(10,5))
+
+        # Slat points
+        slat_frame = ttk.Frame(frame)
+        slat_frame.pack(fill='x', pady=2)
+        self.slat_label = ttk.Label(slat_frame, text="Slat points:")
+        self.slat_label.pack(side='left')
+        self.slat_entry = ttk.Entry(slat_frame, textvariable=self.slat_points, width=8)
+        self.slat_entry.pack(side='right')
+        if self.slat_type.get() == "None":
+            self.slat_entry.config(state='disabled')
+            self.slat_label.config(foreground='gray')
+        
+        # Main points
+        main_frame = ttk.Frame(frame)
+        main_frame.pack(fill='x', pady=2)
+        self.main_label = ttk.Label(main_frame, text="Main points:")
+        self.main_label.pack(side='left')
+        self.main_entry = ttk.Entry(main_frame, textvariable=self.main_points, width=8)
+        self.main_entry.pack(side='right')
+        
+        # Flap points
+        flap_frame = ttk.Frame(frame)
+        flap_frame.pack(fill='x', pady=2)
+        self.flap_label = ttk.Label(flap_frame, text="Flap points:")
+        self.flap_label.pack(side='left')
+        self.flap_entry = ttk.Entry(flap_frame, textvariable=self.flap_points, width=8)
+        self.flap_entry.pack(side='right')
+        if self.flap_type.get() == "None":
+            self.flap_entry.config(state='disabled')
+            self.flap_label.config(foreground='gray')
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x', pady=(20,0))
+        
+        ttk.Button(btn_frame, text="Export", command=lambda: self.perform_export(export_window)).pack(side='right', padx=(5,0))
+        ttk.Button(btn_frame, text="Cancel", command=export_window.destroy).pack(side='right')
+        
+        self.update_export_options()
+
+    def calculate_gap_overlap(self):
+        """Calculate gap and overlap between main component and flap"""
+        if self.main_component is None or self.flap_component is None:
+            self.gap_value = 0.0
+            self.overlap_value = 0.0
+            return
+        
+        try:
+            # Get deflected flap for calculations
+            deflected_flap = self.apply_flap_deflection()
+            
+            # Find main component trailing edge (maximum x coordinate)
+            main_te_idx = np.argmax(self.main_component[:, 0])
+            main_te_point = self.main_component[main_te_idx]
+            
+            # Find flap leading edge (minimum x coordinate)
+            flap_le_idx = np.argmin(deflected_flap[:, 0])
+            flap_le_point = deflected_flap[flap_le_idx]
+            
+            # Overlap calculation
+            x_main_max = np.max(self.main_component[:, 0])
+            x_flap_min = np.min(deflected_flap[:, 0])
+            
+            self.overlap_value = x_main_max - x_flap_min
+            
+            # Gap calculation
+            min_distance = float('inf')
+            
+            for flap_point in deflected_flap:
+                distance = np.sqrt((main_te_point[0] - flap_point[0])**2 + 
+                                (main_te_point[1] - flap_point[1])**2)
+                if distance < min_distance:
+                    min_distance = distance
+                cond = np.logical_and(
+                    flap_point[0] < self.main_component[:, 0],
+                    flap_point[1] > self.main_component[:, 1]
+                )
+                if np.any(cond):
+                    min_distance = -1.0
+                    break
+
+            self.gap_value = min_distance
+            
+                
+        except Exception as e:
+            print(f"Error calculating gap/overlap: {str(e)}")
+            self.gap_value = 0.0
+            self.overlap_value = 0.0
+        
+        # Update GUI variables
+        if hasattr(self, 'flap_info_vars'):
+            if 'gap' in self.flap_info_vars:
+                if self.gap_value < 0:
+                    self.flap_info_vars['gap'].set("Interference")
+                else:
+                    self.flap_info_vars['gap'].set(f"{self.gap_value:.6f}")
+
+            if 'overlap' in self.flap_info_vars:
+                self.flap_info_vars['overlap'].set(f"{self.overlap_value:.6f}")
+            
+            if 'cf_c' in self.flap_info_vars:
+                cf_c = (1 - np.min(self.flap_component[:,0]))
+                self.flap_info_vars['cf_c'].set(f"{cf_c:.6f}")
+
+            if 'cs_c' in self.flap_info_vars:
+                cs_c = np.max(self.slat_component[:,0])
+                self.flap_info_vars['cs_c'].set(f"{cs_c:.6f}")
+
+    def update_export_options(self):
+        """Update export options based on checkboxes"""
+        main_enabled = self.export_main.get()
+        flap_enabled = self.export_flap.get()
+        slat_enabled = self.export_slat.get()
+        
+        # Enable/disable entries
+        self.main_entry.config(state='normal' if main_enabled else 'disabled')
+        self.flap_entry.config(state='normal' if flap_enabled else 'disabled')
+        self.slat_entry.config(state='normal' if slat_enabled else 'disabled')
+        self.main_label.config(foreground='black' if main_enabled else 'gray')
+        self.flap_label.config(foreground='black' if flap_enabled else 'gray')
+        self.slat_label.config(foreground='black' if slat_enabled else 'gray')
+
+    def perform_export(self, export_window):
+        """Perform the actual export"""
+        if not self.export_main.get() and not self.export_flap.get():
+            messagebox.showwarning("Warning", "Please select at least one component to export!")
+            return
     
+        if self.file_type.get() == "CSV":
+            filename = filedialog.asksaveasfilename(
+                title="Export to CSV",
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+        elif self.file_type.get() == "XLSX":
+            filename = filedialog.asksaveasfilename(
+                title="Export to XLSX",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+        
+        if filename:
+            try:
+                if self.file_type.get() == "XLSX":
+                    self.export_to_excel(filename)
+
+                elif self.file_type.get() == "CSV":
+                    self.export_to_csv(filename)
+
+                export_window.destroy()
+                self.status_label.config(text="Export completed successfully!")
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Export failed: {str(e)}")
+
+    def export_to_excel(self, filename):
+        """Export components to Excel file"""
+        data = {
+            'x': [],
+            'y': [],
+            'z': []
+        }
+
+        if self.export_slat.get():
+            slat_deflected = self.apply_slat_deflection()
+            slat_data = self.resample_component(slat_deflected, self.slat_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Slat coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(slat_data.shape[0]):
+                data['x'].append(slat_data[i, 0].tolist())
+                data['y'].append(slat_data[i, 1].tolist())
+                data['z'].append(0.0) 
+
+        if self.export_main.get():
+            main_data = self.resample_component(self.main_component, self.main_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Main coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(main_data.shape[0]):
+                data['x'].append(main_data[i, 0].tolist())
+                data['y'].append(main_data[i, 1].tolist())
+                data['z'].append(0.0) 
+
+        if self.export_flap.get():
+            flap_deflected = self.apply_flap_deflection()
+            flap_data = self.resample_component(flap_deflected, self.flap_points.get())
+            data['x'].append("")
+            data['y'].append("")
+            data['z'].append("")
+            data['x'].append("Flap coords (x,y,z)")
+            data['y'].append("")
+            data['z'].append("")
+            for i in range(flap_data.shape[0]):
+                data['x'].append(flap_data[i, 0].tolist())
+                data['y'].append(flap_data[i, 1].tolist())
+                data['z'].append(0.0)
+        
+        
+        df = pd.DataFrame.from_dict(data, orient='index').transpose()
+        df.to_excel(filename, index=False, header=False)
+
+    def export_to_csv(self, filename):
+        """Export components to CSV file"""
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile, delimiter=',')
+
+            if self.export_slat.get():
+                writer.writerow("")
+                writer.writerow(['Slat coords (x,y)'])
+                slat_deflected = self.apply_slat_deflection()
+                slat_deflected = self.resample_component(slat_deflected, self.slat_points.get())
+                for point in slat_deflected:
+                    writer.writerow([point[0], point[1], 0.0])
+            
+            if self.export_main.get():
+                writer.writerow("")
+                writer.writerow(['Main coords (x,y,z)'])
+                main_data = self.resample_component(self.main_component, self.main_points.get())
+                for point in main_data:
+                    writer.writerow([point[0], point[1], 0.0])
+            
+            if self.export_flap.get():
+                writer.writerow("")
+                writer.writerow(['Flap coords (x,y,z)'])
+                flap_deflected = self.apply_flap_deflection()
+                flap_data = self.resample_component(flap_deflected, self.flap_points.get())
+                for point in flap_data:
+                    writer.writerow([point[0], point[1], 0.0])
+
+    def apply_slat_deflection(self):
+        """Apply rigid rotation to slat around hinge point"""
+
+        if self.slat_component is None or abs(self.params['Slat Deflection']) < 1e-6:
+            return self.slat_component.copy() if self.slat_component is not None else None
+        
+        xh, yh = self.params['xh_slat'], self.params['yh_slat']
+        delta = np.deg2rad(self.params['Slat Deflection'])
+
+        # Translate slat so hinge is at origin
+        x_trans = self.slat_component[:, 0] - xh
+        y_trans = self.slat_component[:, 1] - yh
+
+        # Apply rotation matrix (counterclockwise for positive deflection)
+        cos_delta = np.cos(delta)
+        sin_delta = np.sin(delta) 
+
+        x_rot = x_trans * cos_delta - y_trans * sin_delta
+        y_rot = x_trans * sin_delta + y_trans * cos_delta
+
+        deflected_slat = np.column_stack([x_rot + xh, y_rot + yh])
+
+        return deflected_slat
+
+    def apply_flap_deflection(self):
+        """Apply rigid rotation to flap around hinge point"""
+        if self.flap_component is None or abs(self.params['Flap Deflection']) < 1e-6:
+            return self.flap_component.copy() if self.flap_component is not None else None
+        
+        # Get hinge point and deflection angle
+        xh, yh = self.params['xh_flap'], self.params['yh_flap']
+        delta = np.deg2rad(self.params['Flap Deflection'])
+        
+        # Translate flap so hinge is at origin
+        x_trans = self.flap_component[:, 0] - xh
+        y_trans = self.flap_component[:, 1] - yh
+        
+        # Apply rotation matrix (clockwise for positive deflection)
+        cos_delta = np.cos(-delta)
+        sin_delta = np.sin(-delta)
+        
+        x_rot = x_trans * cos_delta - y_trans * sin_delta
+        y_rot = x_trans * sin_delta + y_trans * cos_delta
+        
+        # Translate back
+        deflected_flap = np.column_stack([x_rot + xh, y_rot + yh])
+        
+        return deflected_flap
+
+    def resample_component(self, component, n_points):
+        """Resample component to specified number of points, starting from trailing edge"""
+        if component is None or len(component) == 0:
+            return np.array([])
+        
+        # Find trailing edge (maximum x coordinate)
+        te_idx = np.argmax(component[:, 0])
+        
+        # Reorder starting from trailing edge: TE -> upper surface -> LE -> lower surface -> TE
+        reordered = np.concatenate([component[te_idx:], component[:te_idx+1]])
+        
+        # Create parameter t for interpolation
+        distances = np.concatenate([[0], np.cumsum(np.sqrt(np.diff(reordered[:, 0])**2 + np.diff(reordered[:, 1])**2))])
+        t_original = distances / distances[-1]
+        
+        # New parameter values for resampling
+        t_new = np.linspace(0, 1, n_points)
+        
+        # Interpolate
+        from scipy.interpolate import interp1d
+        fx = interp1d(t_original, reordered[:, 0], kind='linear')
+        fy = interp1d(t_original, reordered[:, 1], kind='linear')
+        
+        resampled = np.column_stack([fx(t_new), fy(t_new)])
+        return resampled
+
+    def update_parameters(self):
+        """Update all parameters and regenerate"""
+        try:
+            # Save current view limits
+            current_xlim = self.ax.get_xlim()
+            current_ylim = self.ax.get_ylim()
+            
+            if hasattr(self, 'edit_entry'):
+                self.params[self.current_param] = float(self.edit_entry.get())
+
+            self.update_tree_parameters()
+            
+            if self.flap_type.get() != "None" and self.slat_type.get() != "None":
+                    self.status_label.config(text="Flap and Slat generated! Drag control points to modify")
+                    self.generate_flap()
+                    self.generate_slat()
+                    self.assemble_components()
+                    self.plot_results()
+                    self.calculate_gap_overlap()
+                    
+
+            elif self.flap_type.get() != "None" and self.slat_type.get() == "None":
+                self.status_label.config(text="Flap generated! Drag control points to modify")
+                self.generate_flap()
+                self.assemble_components()
+                self.plot_results()
+                self.calculate_gap_overlap()
+                
+                
+            elif self.flap_type.get() == "None" and self.slat_type.get() != "None":
+                self.status_label.config(text="Slat generated! Drag control points to modify")
+                self.generate_slat()
+                self.assemble_components()
+                self.plot_results()
+                
+            
+            elif self.flap_type.get() == "None" and self.slat_type.get() == "None":
+                self.status_label.config(text="Basic airfoil loaded successfully!")
+                self.assemble_components()
+                self.plot_results()
+
+            if  not hasattr(self, 'edit_entry'):
+                self.status_label.config(text="Manual update completed!")
+                
+            # Restore view limits
+            self.ax.set_xlim(current_xlim)
+            self.ax.set_ylim(current_ylim)
+            self.canvas.draw()
+        except Exception as e:
+            self.status_label.config(text=f"Error updating parameters: {str(e)}")
+
+
+    def update_parameters_from_sketch(self):
+        """Update all parameters based on control points moved in the sketch"""
+        try:
+            if self.main_slot_flap_control_points is None or self.flap_control_points is None:
+                return
+            
+            p = self.params
+
+            # Extract control points
+            x1, y1 = self.main_slot_flap_control_points[0]
+            x2, y2 = self.main_slot_flap_control_points[1]
+            
+            # Ensure x1 and x2 points are always on lower surface
+            if hasattr(self, 'f_lower') and self.f_lower is not None:
+                y1_corrected = self.f_lower(x1)
+                y2_corrected = self.f_lower(x2)
+                self.main_slot_flap_control_points[0][1] = y1_corrected
+                self.main_slot_flap_control_points[1][1] = y2_corrected
+                y1 = y1_corrected
+                y2 = y2_corrected
+            
+            x3, y3 = self.main_slot_flap_control_points[2]
+            x4, y4 = self.main_slot_flap_control_points[3]
+            x5, y5 = self.main_slot_flap_control_points[4]
+            x6, y6 = self.main_slot_flap_control_points[5]
+            
+            x7, y7 = self.flap_control_points[0]
+            x8, y8 = self.flap_control_points[1]
+            x9, y9 = self.flap_control_points[2]
+            x10, y10 = self.flap_control_points[3]
+            x11, y11 = self.flap_control_points[4]
+            x12, y12 = self.flap_control_points[5]
+            
+            # Ensure flap points on airfoil surfaces
+            if hasattr(self, 'f_upper') and self.f_upper is not None and hasattr(self, 'f_lower') and self.f_lower is not None:
+                y7_corrected = self.f_upper(x7)  # x7 on upper surface
+                y8_corrected = self.f_upper(x8)  # x8 on upper surface  
+                y11_corrected = self.f_lower(x11)  # x11 on lower surface
+                y12_corrected = self.f_lower(x12)  # x12 on lower surface
+                
+                self.flap_control_points[0][1] = y7_corrected
+                self.flap_control_points[1][1] = y8_corrected
+                self.flap_control_points[4][1] = y11_corrected
+                self.flap_control_points[5][1] = y12_corrected
+                
+                y7 = y7_corrected
+                y8 = y8_corrected
+                y11 = y11_corrected
+                y12 = y12_corrected
+            
+            # Direct coordinate updates
+            p['x1'] = x1
+            p['x2'] = x2
+            p['x3'] = x3
+            p['y3'] = y3
+            p['x4'] = x4
+            p['y4'] = y4
+            p['x5'] = x5
+            p['y5'] = y5
+            p['x6'] = x6
+            p['x7'] = x7
+            p['x12'] = x12
+            p['xh_flap'] = self.flap_hinge_point[0]
+            p['yh_flap'] = self.flap_hinge_point[1]
+            
+            y6_upper = self.f_upper(x6)
+            p['DeltaTE_main'] = abs(y6_upper - y6)
+            
+            # Flap parameters
+            p['x7'] = x7
+            p['x8'] = x8
+            p['x9'] = x9
+            p['y9'] = y9
+            p['x10'] = x10
+            p['y10'] = y10
+            p['x11'] = x11
+            p['y11'] = y11
+
+            if self.slat_type.get() != "None":
+                # Slat parameters
+                x13, y13 = self.main_slot_slat_control_points[0]
+                x14, y14 = self.main_slot_slat_control_points[1]
+                x15, y15 = self.main_slot_slat_control_points[2]
+                x16, y16 = self.main_slot_slat_control_points[3]
+                x17, y17 = self.main_slot_slat_control_points[4]
+                x18, y18 = self.main_slot_slat_control_points[5]
+                x19, y19 = self.slat_control_points[0]
+                x20, y20 = self.slat_control_points[1]
+                x21, y21 = self.slat_control_points[2]
+                x22, y22 = self.slat_control_points[3]
+                x23, y23 = self.slat_control_points[4]
+                x24, y24 = self.slat_control_points[5]
+
+                # Direct coordinate updates
+                p['x13'] = x13
+                p['y13'] = y13
+                p['x14'] = x14
+                p['y14'] = y14
+                p['x15'] = x15
+                p['y15'] = y15
+                p['x16'] = x16
+                p['y16'] = y16
+                p['x17'] = x17
+                p['y17'] = y17
+                p['x18'] = x18
+                p['y18'] = y18
+                p['x19'] = x19
+                p['y19'] = y19
+                p['x20'] = x20
+                p['y20'] = y20
+                p['x21'] = x21
+                p['y21'] = y21
+                p['x22'] = x22
+                p['y22'] = y22
+                p['x23'] = x23
+                p['y23'] = y23
+                p['x24'] = x24
+                p['y24'] = y24
+                
+                # Hinge point for slat
+                p['xh_slat'] = self.slat_hinge_point[0]
+                p['yh_slat'] = self.slat_hinge_point[1]
+
+            self.update_tree_parameters()
+                    
+        except Exception as e:
+            self.status_label.config(text=f"Error updating parameters: {str(e)}")
+
+    def restart_code(self):
+        """Restart the application"""
+        self.root.destroy()
+        self.__init__(tk.Tk())
+
     def load_airfoil(self):
         """Load airfoil data from file"""
         filename = filedialog.askopenfilename(
@@ -410,9 +1131,37 @@ class AirfoilDesigner:
             try:
                 self.airfoil_data = np.loadtxt(filename)
                 self.split_airfoil()
-                self.generate_components()
-                self.plot_results()
-                self.update_status()
+                self.plot_airfoil()
+
+                if self.flap_type.get() != "None" and self.slat_type.get() != "None":
+                    self.generate_flap()
+                    self.generate_slat()
+                    self.assemble_components()
+                    self.plot_results()
+                    self.status_label.config(text="Flap and Slat generated! Drag control points to modify")
+                    self.calculate_gap_overlap()
+
+                elif self.flap_type.get() != "None" and self.slat_type.get() == "None":
+                    self.generate_flap()
+                    self.assemble_components()
+                    self.plot_results()
+                    self.status_label.config(text="Flap generated! Drag control points to modify")
+                    self.calculate_gap_overlap()
+                
+                elif self.flap_type.get() == "None" and self.slat_type.get() != "None":
+                    self.generate_slat()
+                    self.assemble_components()
+                    self.plot_results()
+                    self.status_label.config(text="Slat generated! Drag control points to modify")
+                    self.calculate_gap_overlap()
+                
+                elif self.flap_type.get() == "None" and self.slat_type.get() == "None":
+                    self.assemble_components()
+                    self.plot_results()
+                    self.status_label.config(text="Basic airfoil loaded successfully!")
+
+                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Error loading airfoil: {str(e)}")
     
@@ -420,495 +1169,597 @@ class AirfoilDesigner:
         """Split airfoil into upper and lower surfaces"""
         if self.airfoil_data is None:
             return
-        
         x_le_idx = np.argmin(self.airfoil_data[:, 0])
-        x_upper = self.airfoil_data[:x_le_idx+1, 0]
-        y_upper = self.airfoil_data[:x_le_idx+1, 1]
-        x_lower = self.airfoil_data[x_le_idx:, 0]
-        y_lower = self.airfoil_data[x_le_idx:, 1]
-        
-        self.f_upper = interp1d(x_upper, y_upper, kind='linear', bounds_error=False, fill_value='extrapolate')
-        self.f_lower = interp1d(x_lower, y_lower, kind='linear', bounds_error=False, fill_value='extrapolate')
+        self.x_upper = self.airfoil_data[:x_le_idx+1, 0]
+        self.y_upper = self.airfoil_data[:x_le_idx+1, 1]
+        self.x_lower = self.airfoil_data[x_le_idx:, 0]
+        self.y_lower = self.airfoil_data[x_le_idx:, 1]
+
+        self.f_upper = interp1d(self.x_upper, self.y_upper, kind='linear', bounds_error=False, fill_value='extrapolate')
+        self.f_lower = interp1d(self.x_lower, self.y_lower, kind='linear', bounds_error=False, fill_value='extrapolate')
     
-    def generate_components(self):
-        """Generate all components based on current configuration"""
+    def bezier_curve(self, control_points, n_points=60):
+        """Generate Bezier curve from control points"""
+        n = len(control_points) - 1
+        t = np.linspace(0, 1, n_points)
+        curve = np.zeros((n_points, 2))
+        
+        for i in range(n_points):
+            for j in range(n + 1):
+                binom_coeff = math.comb(n, j)
+                bernstein = binom_coeff * (t[i] ** j) * ((1 - t[i]) ** (n - j))
+                curve[i] += bernstein * control_points[j]
+        
+        return curve
+    
+    def generate_main_slot_slat_control_points(self):
+        """Generate main slot slat control points"""
+        p = self.params
+
+        # Point 13: always on upper surface
+        x13, y13 = p['x13'], self.f_upper(p['x13'])
+        # Point 14: always on upper surface
+        x14, y14 = p['x14'], self.f_upper(p['x14'])
+        
+        x15, y15 = p['x15'], p['y15']
+        x16, y16 = p['x16'], p['y16']
+        
+        # Point 17: always on lower surface
+        x17, y17 = p['x17'], self.f_lower(p['x17'])
+        # Point 18: always on lower surface
+        x18, y18 = p['x18'], self.f_lower(p['x18'])
+        
+        self.main_slot_slat_control_points = np.array([[x13, y13], [x14, y14], [x15, y15], [x16, y16], [x17, y17], [x18, y18]])
+    
+    def generate_slat_control_points(self):
+        """Generate slat control points"""
+        p = self.params
+
+        # Point 19: always on lower surface
+        x19, y19 = p['x19'], self.f_lower(p['x19'])
+
+        # Point 20: always on lower surface
+        x20, y20 = p['x20'], self.f_lower(p['x20'])
+        
+        x21, y21 = p['x21'], p['y21']
+        x22, y22 = p['x22'], p['y22']
+        
+        x23, y23 = p['x23'], p['y23']
+        x24, y24 = p['x24'], p['y24']
+
+        self.slat_control_points = np.array([[x19, y19], [x20, y20], [x21, y21], [x22, y22], [x23, y23], [x24, y24]])
+
+    def generate_slat(self):
+        """Generate slat based on current parameters"""
         if self.airfoil_data is None:
+            self.status_label.config(text="Please load an airfoil first!")
             return
         
         try:
-            if self.config.has_flap:
-                self.generate_flap()
-            if self.config.has_slat:
-                self.generate_slat()
-            self.assemble_components()
-            if self.config.has_flap:
-                self.calculate_gap_overlap()
+            self.generate_main_slot_slat_control_points()
+            self.generate_slat_control_points()
+            self.slat_hinge_point = np.array([self.params['xh_slat'], self.params['yh_slat']])
+            self.main_slot_slat_curve = self.bezier_curve(self.main_slot_slat_control_points)
+            self.slat_curve = self.bezier_curve(self.slat_control_points)
+
         except Exception as e:
-            self.status_label.config(text=f"Error generating components: {str(e)}")
-    
+            self.status_label.config(text=f"Error generating slat: {str(e)}")
+
     def generate_flap(self):
-        """Generate flap components"""
-        self.control_points['main_slot_flap'] = self.generate_main_slot_flap_control_points()
-        self.control_points['flap'] = self.generate_flap_control_points()
-        self.control_points['hinge_flap'] = np.array([self.params['xh_flap'], self.params['yh_flap']])
+        """Generate flap based on current parameters"""
+        if self.airfoil_data is None:
+            self.status_label.config(text="Please load an airfoil first!")
+            return
         
-        self.curves['main_slot_flap'] = self.geometry_engine.bezier_curve(self.control_points['main_slot_flap'])
-        self.curves['flap'] = self.geometry_engine.bezier_curve(self.control_points['flap'])
-    
-    def generate_slat(self):
-        """Generate slat components"""
-        self.control_points['main_slot_slat'] = self.generate_main_slot_slat_control_points()
-        self.control_points['slat'] = self.generate_slat_control_points()
-        self.control_points['hinge_slat'] = np.array([self.params['xh_slat'], self.params['yh_slat']])
+        try:
+            self.generate_main_slot_flap_control_points()
+            self.generate_flap_control_points()
+            self.flap_hinge_point = np.array([self.params['xh_flap'], self.params['yh_flap']])
+            self.main_slot_flap_curve = self.bezier_curve(self.main_slot_flap_control_points)
+            self.flap_curve = self.bezier_curve(self.flap_control_points)
+        except Exception as e:
+            self.status_label.config(text=f"Error generating flap: {str(e)}")
         
-        self.curves['main_slot_slat'] = self.geometry_engine.bezier_curve(self.control_points['main_slot_slat'])
-        self.curves['slat'] = self.geometry_engine.bezier_curve(self.control_points['slat'])
-    
-    def generate_main_slot_flap_control_points(self) -> np.ndarray:
+    def generate_main_slot_flap_control_points(self):
         """Generate main slot flap control points"""
         p = self.params
-        
-        # Point calculations (condensed from original)
+
+        # Point 1: always on lower surface  
         x1, y1 = p['x1'], self.f_lower(p['x1'])
-        x2p = x1 - p['Delta_X1']
-        y2p = self.f_lower(x2p)
-        slope_lower = np.arctan((y2p - y1) / (x2p - x1))
-        x2 = p['x2']
-        y2 = y1 + slope_lower * (x2 - x1)
-        
-        x3 = p['x3']
-        y3p = self.f_upper(x3)
-        y3 = y2 + p['FractionY'] * (y3p - y2)
-        
-        x4 = x3 - p['DeltaX4']
-        angolo_3 = 90 - 57.3 * np.arctan((y3 - y2) / (x3 - x2))
-        angolo_tot = angolo_3 - p['Delta_angolo']
-        slope_4 = np.tan(np.deg2rad(angolo_tot))
-        y4 = y3 + slope_4 * (x4 - x3)
-        
+
+        # Point 2: always on lower surface  
+        x2, y2 = p['x2'], self.f_lower(p['x2'])
+        x3, y3 = p['x3'], p['y3']
+        x4, y4 = p['x4'], p['y4']
+        x5, y5 = p['x5'], p['y5']
+
         x6 = p['x6']
         y6_upper = self.f_upper(x6)
         y6 = y6_upper - p['DeltaTE_main']
         
-        x6p = x6 + 0.05
-        y6p = self.f_upper(x6p)
-        slope_p6 = -np.arctan((y6p - y6) / (x6p - x6))
-        x5 = x6 - p['Delta_Lip']
-        y5 = y6 + slope_p6 * (x6 - x5)
-        
-        return np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4], [x5, y5], [x6, y6]])
+        self.main_slot_flap_control_points = np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4], [x5, y5], [x6, y6]])
     
-    def generate_flap_control_points(self) -> np.ndarray:
+    def generate_flap_control_points(self):
         """Generate flap control points"""
         p = self.params
-        
+
+        # Point 7: always on upper surface
         x7, y7 = p['x7'], self.f_upper(p['x7'])
-        x8, y8 = p['x6'], self.f_upper(p['x6'])
         
-        x9 = self.control_points['main_slot_flap'][2, 0] + p['DeltaX9']
-        vdist_9 = abs(self.f_upper(p['x6']) - self.f_lower(p['x6']))
-        y9 = self.control_points['main_slot_flap'][2, 1] + p['DeltaY9'] * vdist_9
+        # Point 8: always on upper surface 
+        x8, y8 = p['x8'], self.f_upper(p['x8'])
         
-        x10 = x9 + p['DeltaX10']
-        y10 = y9 + p['DeltaY10'] * vdist_9
-        
+        x9, y9 = p['x9'], p['y9']
+        x10, y10 = p['x10'], p['y10']
+
+        # Point 11: always on lower surface
+        x11, y11 = p['x11'], self.f_lower(p['x11'])
+
+        # Point 12: always on lower surface
         x12, y12 = p['x12'], self.f_lower(p['x12'])
-        x11 = x12 - p['DeltaX11']
-        x12_bis = x12 + 0.00001
-        y12_bis = self.f_lower(x12_bis)
-        slope_y11 = np.arctan((y12_bis - y12) / (x12_bis - x12))
-        y11 = y12 - slope_y11 * (x12 - x11)
         
-        return np.array([[x7, y7], [x8, y8], [x9, y9], [x10, y10], [x11, y11], [x12, y12]])
-    
-    def generate_main_slot_slat_control_points(self) -> np.ndarray:
-        """Generate main slot slat control points"""
-        p = self.params
-        return np.array([[p['x13'], p['y13']], [p['x14'], p['y14']], [p['x15'], p['y15']],
-                        [p['x16'], p['y16']], [p['x17'], p['y17']], [p['x18'], p['y18']]])
-    
-    def generate_slat_control_points(self) -> np.ndarray:
-        """Generate slat control points"""
-        p = self.params
-        return np.array([[p['x19'], p['y19']], [p['x20'], p['y20']], [p['x21'], p['y21']],
-                        [p['x22'], p['y22']], [p['x23'], p['y23']], [p['x24'], p['y24']]])
+        self.flap_control_points = np.array([[x7, y7], [x8, y8], [x9, y9], [x10, y10], [x11, y11], [x12, y12]])
     
     def assemble_components(self):
-        """Assemble main and component surfaces"""
+        """Assemble main and flap components"""
+
         if self.airfoil_data is None:
+            self.status_label.config(text="Please load an airfoil first!")
             return
-        
+
+        if self.flap_type.get() != "None" and self.slat_type.get() == "None":
+            p = self.params
+            
+            ix6 = np.argmin(np.abs(p['x6'] - self.x_upper))
+            ix1 = np.argmin(np.abs(p['x1'] - self.x_lower))
+            ix7 = np.argmin(np.abs(p['x7'] - self.x_upper))
+            ix12 = np.argmin(np.abs(p['x12'] - self.x_lower))
+            
+            # Main component
+            main_x = np.concatenate([self.x_upper[ix6:], self.x_lower[:ix1], self.main_slot_flap_curve[:, 0]])
+            main_y = np.concatenate([self.y_upper[ix6:], self.y_lower[:ix1], self.main_slot_flap_curve[:, 1]])
+            
+            cos_twist = np.cos(-np.deg2rad(p['Twist Main']))
+            sin_twist = np.sin(-np.deg2rad(p['Twist Main']))
+            self.main_component_undeflected = np.column_stack([main_x, main_y])
+            self.main_component = np.column_stack([
+                main_x * cos_twist - main_y * sin_twist,
+                main_x * sin_twist + main_y * cos_twist
+            ])
+            
+            # Flap component (undeflected)
+            flap_x = np.concatenate([self.x_upper[:ix7], self.flap_curve[:, 0], self.x_lower[ix12+1:]])
+            flap_y = np.concatenate([self.y_upper[:ix7], self.flap_curve[:, 1], self.y_lower[ix12+1:]])
+            
+            # Apply main rotation only for display
+            self.flap_component = np.column_stack([
+                flap_x * cos_twist - flap_y * sin_twist,
+                flap_x * sin_twist + flap_y * cos_twist
+            ])
+            self.flap_component_undeflected = np.column_stack([flap_x, flap_y])
+            self.slat_component = None
+
+        elif self.flap_type.get() != "None" and self.slat_type.get() != "None":
+            p = self.params
+            
+            ix6 = np.argmin(np.abs(p['x6'] - self.x_upper))
+            ix1 = np.argmin(np.abs(p['x1'] - self.x_lower))
+            ix7 = np.argmin(np.abs(p['x7'] - self.x_upper))
+            ix12 = np.argmin(np.abs(p['x12'] - self.x_lower))
+            ix13 = np.argmin(np.abs(p['x13'] - self.x_upper))
+            ix18 = np.argmin(np.abs(p['x18'] - self.x_lower))
+            ix19 = np.argmin(np.abs(p['x19'] - self.x_lower))
+            ix24 = np.argmin(np.abs(p['x24'] - self.x_upper))
+            
+            # Main component
+            main_x = np.concatenate([self.x_upper[ix6:ix13], self.main_slot_slat_curve[:, 0], self.x_lower[ix18+1:ix1], self.main_slot_flap_curve[:, 0]])
+            main_y = np.concatenate([self.y_upper[ix6:ix13], self.main_slot_slat_curve[:, 1], self.y_lower[ix18+1:ix1], self.main_slot_flap_curve[:, 1]])
+            
+            cos_twist = np.cos(-np.deg2rad(p['Twist Main']))
+            sin_twist = np.sin(-np.deg2rad(p['Twist Main']))
+            self.main_component_undeflected = np.column_stack([main_x, main_y])
+            self.main_component = np.column_stack([
+                main_x * cos_twist - main_y * sin_twist,
+                main_x * sin_twist + main_y * cos_twist
+            ])
+            
+            # Flap component (undeflected)
+            flap_x = np.concatenate([self.x_upper[:ix7], self.flap_curve[:, 0], self.x_lower[ix12+1:]])
+            flap_y = np.concatenate([self.y_upper[:ix7], self.flap_curve[:, 1], self.y_lower[ix12+1:]])
+            
+            # Apply main rotation only for display
+            self.flap_component_undeflected = np.column_stack([flap_x, flap_y])
+            self.flap_component = np.column_stack([
+                flap_x * cos_twist - flap_y * sin_twist,
+                flap_x * sin_twist + flap_y * cos_twist
+            ])
+
+            # Slat component
+            slat_x = np.concatenate([self.x_upper[ix24:-1], self.x_lower[:ix19], self.slat_curve[:, 0]])
+            slat_y = np.concatenate([self.y_upper[ix24:-1], self.y_lower[:ix19], self.slat_curve[:, 1]])
+            slat_x[0] = p['x24']  
+            slat_y[0] = self.f_upper(p['x24']) 
+
+            # Apply main rotation only for display
+            self.slat_component_undeflected = np.column_stack([slat_x, slat_y])
+            self.slat_component = np.column_stack([
+                slat_x * cos_twist - slat_y * sin_twist,
+                slat_x * sin_twist + slat_y * cos_twist
+            ])
+
+        elif self.flap_type.get() == "None" and self.slat_type.get() != "None":
+
+            p = self.params
+            
+            ix13 = np.argmin(np.abs(p['x13'] - self.x_upper))
+            ix18 = np.argmin(np.abs(p['x18'] - self.x_lower))
+            ix19 = np.argmin(np.abs(p['x19'] - self.x_lower))
+            ix24 = np.argmin(np.abs(p['x24'] - self.x_upper))
+            
+            # Main component
+            main_x = np.concatenate([self.x_upper[:ix13], self.main_slot_slat_curve[:, 0], self.x_lower[ix18+1:]])
+            main_y = np.concatenate([self.y_upper[:ix13], self.main_slot_slat_curve[:, 1], self.y_lower[ix18+1:]])
+            
+            cos_twist = np.cos(-np.deg2rad(p['Twist Main']))
+            sin_twist = np.sin(-np.deg2rad(p['Twist Main']))
+            self.main_component_undeflected = np.column_stack([main_x, main_y])
+            self.main_component = np.column_stack([
+                main_x * cos_twist - main_y * sin_twist,
+                main_x * sin_twist + main_y * cos_twist
+            ])
+            
+            # Slat component
+            slat_x = np.concatenate([self.x_upper[ix24:-1], self.x_lower[:ix19], self.slat_curve[:, 0]])
+            slat_y = np.concatenate([self.y_upper[ix24:-1], self.y_lower[:ix19], self.slat_curve[:, 1]])
+            slat_x[0] = p['x24']  
+            slat_y[0] = self.f_upper(p['x24']) 
+
+            # Apply main rotation only for display
+            self.slat_component_undeflected = np.column_stack([slat_x, slat_y])
+            self.slat_component = np.column_stack([
+                slat_x * cos_twist - slat_y * sin_twist,
+                slat_x * sin_twist + slat_y * cos_twist
+            ])
+            self.flap_component = None
+
+        elif self.flap_type.get() == "None" and self.slat_type.get() == "None":
+            # No flap or slat, just the main component
+            p = self.params
+
+            # Main component
+            main_x = np.concatenate([self.x_upper, self.x_lower])
+            main_y = np.concatenate([self.y_upper, self.y_lower])
+            
+            cos_twist = np.cos(-np.deg2rad(p['Twist Main']))
+            sin_twist = np.sin(-np.deg2rad(p['Twist Main']))
+            self.main_component_undeflected = np.column_stack([main_x, main_y])
+            self.main_component = np.column_stack([
+                main_x * cos_twist - main_y * sin_twist,
+                main_x * sin_twist + main_y * cos_twist
+            ])
+            
+            self.flap_component = None
+            self.slat_component = None
+
+    
+    def get_deflected_flap(self):
+        """Get flap component with deflection applied"""
         p = self.params
-        cos_twist = np.cos(-np.deg2rad(p['Twist Main']))
-        sin_twist = np.sin(-np.deg2rad(p['Twist Main']))
         
-        # Get airfoil surface arrays
-        x_upper = self.airfoil_data[:np.argmin(self.airfoil_data[:, 0])+1, 0]
-        y_upper = self.airfoil_data[:np.argmin(self.airfoil_data[:, 0])+1, 1]
-        x_lower = self.airfoil_data[np.argmin(self.airfoil_data[:, 0]):, 0]
-        y_lower = self.airfoil_data[np.argmin(self.airfoil_data[:, 0]):, 1]
+        # Apply deflection
+        xh, yh = p['xh_flap'], p['yh_flap']
+        delta = np.deg2rad(p['Flap Deflection'])
         
-        # Assemble based on configuration
-        if self.config.has_flap and self.config.has_slat:
-            self.assemble_flap_slat_config(x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist)
-        elif self.config.has_flap:
-            self.assemble_flap_only_config(x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist)
-        elif self.config.has_slat:
-            self.assemble_slat_only_config(x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist)
-        else:
-            self.assemble_basic_config(x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist)
+        x_trans = self.flap_component[:, 0] - xh
+        y_trans = self.flap_component[:, 1] - yh
+        
+        cos_delta = np.cos(-delta)
+        sin_delta = np.sin(-delta)
+        x_rot = x_trans * cos_delta - y_trans * sin_delta
+        y_rot = x_trans * sin_delta + y_trans * cos_delta
+        
+        return np.column_stack([x_rot + xh, y_rot + yh])
     
-    def assemble_flap_slat_config(self, x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist):
-        """Assemble configuration with both flap and slat"""
-        p = self.params
-        
-        # Find indices
-        ix6 = np.argmin(np.abs(p['x6'] - x_upper))
-        ix1 = np.argmin(np.abs(p['x1'] - x_lower))
-        ix7 = np.argmin(np.abs(p['x7'] - x_upper))
-        ix12 = np.argmin(np.abs(p['x12'] - x_lower))
-        ix13 = np.argmin(np.abs(p['x13'] - x_upper))
-        ix18 = np.argmin(np.abs(p['x18'] - x_lower))
-        ix19 = np.argmin(np.abs(p['x19'] - x_lower))
-        ix24 = np.argmin(np.abs(p['x24'] - x_upper))
-        
-        # Main component
-        main_x = np.concatenate([x_upper[ix6:ix13], self.curves['main_slot_slat'][:, 0], 
-                                x_lower[ix18+1:ix1], self.curves['main_slot_flap'][:, 0]])
-        main_y = np.concatenate([y_upper[ix6:ix13], self.curves['main_slot_slat'][:, 1], 
-                                y_lower[ix18+1:ix1], self.curves['main_slot_flap'][:, 1]])
-        
-        self.components['main'] = self.apply_twist(main_x, main_y, cos_twist, sin_twist)
-        
-        # Flap component
-        flap_x = np.concatenate([x_upper[:ix7], self.curves['flap'][:, 0], x_lower[ix12+1:]])
-        flap_y = np.concatenate([y_upper[:ix7], self.curves['flap'][:, 1], y_lower[ix12+1:]])
-        self.components['flap'] = self.apply_twist(flap_x, flap_y, cos_twist, sin_twist)
-        
-        # Slat component
-        slat_x = np.concatenate([x_upper[ix24:-1], x_lower[:ix19], self.curves['slat'][:, 0]])
-        slat_y = np.concatenate([y_upper[ix24:-1], y_lower[:ix19], self.curves['slat'][:, 1]])
-        slat_x[0] = p['x24']
-        slat_y[0] = self.f_upper(p['x24'])
-        self.components['slat'] = self.apply_twist(slat_x, slat_y, cos_twist, sin_twist)
-    
-    def assemble_flap_only_config(self, x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist):
-        """Assemble configuration with flap only"""
-        p = self.params
-        
-        ix6 = np.argmin(np.abs(p['x6'] - x_upper))
-        ix1 = np.argmin(np.abs(p['x1'] - x_lower))
-        ix7 = np.argmin(np.abs(p['x7'] - x_upper))
-        ix12 = np.argmin(np.abs(p['x12'] - x_lower))
-        
-        # Main component
-        main_x = np.concatenate([x_upper[ix6:], x_lower[:ix1], self.curves['main_slot_flap'][:, 0]])
-        main_y = np.concatenate([y_upper[ix6:], y_lower[:ix1], self.curves['main_slot_flap'][:, 1]])
-        self.components['main'] = self.apply_twist(main_x, main_y, cos_twist, sin_twist)
-        
-        # Flap component
-        flap_x = np.concatenate([x_upper[:ix7], self.curves['flap'][:, 0], x_lower[ix12+1:]])
-        flap_y = np.concatenate([y_upper[:ix7], self.curves['flap'][:, 1], y_lower[ix12+1:]])
-        self.components['flap'] = self.apply_twist(flap_x, flap_y, cos_twist, sin_twist)
-        
-        self.components['slat'] = None
-    
-    def assemble_slat_only_config(self, x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist):
-        """Assemble configuration with slat only"""
-        p = self.params
-        
-        ix13 = np.argmin(np.abs(p['x13'] - x_upper))
-        ix18 = np.argmin(np.abs(p['x18'] - x_lower))
-        ix19 = np.argmin(np.abs(p['x19'] - x_lower))
-        ix24 = np.argmin(np.abs(p['x24'] - x_upper))
-        
-        # Main component
-        main_x = np.concatenate([x_upper[:ix13], self.curves['main_slot_slat'][:, 0], x_lower[ix18+1:]])
-        main_y = np.concatenate([y_upper[:ix13], self.curves['main_slot_slat'][:, 1], y_lower[ix18+1:]])
-        self.components['main'] = self.apply_twist(main_x, main_y, cos_twist, sin_twist)
-        
-        # Slat component
-        slat_x = np.concatenate([x_upper[ix24:-1], x_lower[:ix19], self.curves['slat'][:, 0]])
-        slat_y = np.concatenate([y_upper[ix24:-1], y_lower[:ix19], self.curves['slat'][:, 1]])
-        slat_x[0] = p['x24']
-        slat_y[0] = self.f_upper(p['x24'])
-        self.components['slat'] = self.apply_twist(slat_x, slat_y, cos_twist, sin_twist)
-        
-        self.components['flap'] = None
-    
-    def assemble_basic_config(self, x_upper, y_upper, x_lower, y_lower, cos_twist, sin_twist):
-        """Assemble basic configuration (no flap or slat)"""
-        main_x = np.concatenate([x_upper, x_lower])
-        main_y = np.concatenate([y_upper, y_lower])
-        self.components['main'] = self.apply_twist(main_x, main_y, cos_twist, sin_twist)
-        self.components['flap'] = None
-        self.components['slat'] = None
-    
-    def apply_twist(self, x, y, cos_twist, sin_twist):
-        """Apply twist transformation to coordinates"""
-        return np.column_stack([x * cos_twist - y * sin_twist, x * sin_twist + y * cos_twist])
-    
-    def apply_deflection(self, component_name: str) -> Optional[np.ndarray]:
-        """Apply deflection to a component"""
-        if component_name == 'flap' and self.components['flap'] is not None:
-            angle = np.deg2rad(self.params['Flap Deflection'])
-            center = self.control_points['hinge_flap']
-            return self.geometry_engine.apply_rotation(self.components['flap'], -angle, center)
-        
-        elif component_name == 'slat' and self.components['slat'] is not None:
-            angle = np.deg2rad(self.params['Slat Deflection'])
-            center = self.control_points['hinge_slat']
-            return self.geometry_engine.apply_rotation(self.components['slat'], angle, center)
-        
-        return None
-    
-    def calculate_gap_overlap(self):
-        """Calculate gap and overlap between main and flap components"""
-        if self.components['main'] is None or self.components['flap'] is None:
-            self.gap_value = self.overlap_value = 0.0
-            return
-        
-        try:
-            deflected_flap = self.apply_deflection('flap')
-            if deflected_flap is None:
-                deflected_flap = self.components['flap']
-            
-            # Find main trailing edge and flap leading edge
-            main_te_idx = np.argmax(self.components['main'][:, 0])
-            main_te_point = self.components['main'][main_te_idx]
-            flap_le_idx = np.argmin(deflected_flap[:, 0])
-            
-            # Calculate overlap
-            x_main_max = np.max(self.components['main'][:, 0])
-            x_flap_min = np.min(deflected_flap[:, 0])
-            self.overlap_value = x_main_max - x_flap_min
-            
-            # Calculate gap (minimum distance)
-            distances = np.sqrt(np.sum((main_te_point - deflected_flap)**2, axis=1))
-            self.gap_value = np.min(distances)
-            
-            # Check for interference
-            if np.any((deflected_flap[:, 0] < self.components['main'][:, 0][:, None]) & 
-                     (deflected_flap[:, 1] > self.components['main'][:, 1][:, None])):
-                self.gap_value = -1.0
-            
-        except Exception as e:
-            print(f"Error calculating gap/overlap: {e}")
-            self.gap_value = self.overlap_value = 0.0
-        
-        # Update GUI
-        if hasattr(self, 'gap_overlap_vars'):
-            if 'gap' in self.gap_overlap_vars:
-                gap_text = "Interference" if self.gap_value < 0 else f"{self.gap_value:.6f}"
-                self.gap_overlap_vars['gap'].set(gap_text)
-            if 'overlap' in self.gap_overlap_vars:
-                self.gap_overlap_vars['overlap'].set(f"{self.overlap_value:.6f}")
-    
-    def plot_results(self):
-        """Plot all results"""
-        if self.airfoil_data is None:
-            return
-        
+    def plot_airfoil(self):
+        """Plot the original airfoil"""
         self.ax.clear()
-        
-        # Plot original airfoil
-        self.ax.plot(self.airfoil_data[:, 0], self.airfoil_data[:, 1], 'k-', linewidth=1, alpha=0.5, label='Original')
-        
-        # Plot main component
-        if self.components.get('main') is not None:
-            self.ax.plot(self.components['main'][:, 0], self.components['main'][:, 1], 'b-', linewidth=2.5, label='Main')
-        
-        # Plot flap component
-        if self.components.get('flap') is not None:
-            self.plot_component_with_deflection('flap', 'r', 'Flap')
-        
-        # Plot slat component
-        if self.components.get('slat') is not None:
-            self.plot_component_with_deflection('slat', 'g', 'Slat')
-        
-        self.create_interactive_elements()
-        self.setup_plot_appearance()
+        if self.airfoil_data is not None:
+            self.ax.plot(self.airfoil_data[:, 0], self.airfoil_data[:, 1], 'k-', linewidth=1, alpha=0.5, label='Original')
+            self.ax.set_xlabel('x/c')
+            self.ax.set_ylabel('y/c')
+            self.ax.grid(True, alpha=0.3)
+            self.ax.axis('equal')
+            self.ax.legend()
         self.canvas.draw()
     
-    def plot_component_with_deflection(self, component_name: str, color: str, label: str):
-        """Plot a component with optional deflection"""
-        component = self.components[component_name]
-        deflection_key = f'{component_name.title()} Deflection'
-        deflection = self.params.get(deflection_key, 0.0)
-        
-        if abs(deflection) > 1e-6:
-            # Plot both undeflected and deflected
-            self.ax.plot(component[:, 0], component[:, 1], f'{color}--', linewidth=1.5, alpha=0.5, 
-                        label=f'{label} (undeflected)')
-            
-            deflected = self.apply_deflection(component_name)
-            if deflected is not None:
-                self.ax.plot(deflected[:, 0], deflected[:, 1], f'{color}-', linewidth=2.5, 
-                            label=f'{label} (deflected {deflection:.1f}°)')
-        else:
-            # Plot undeflected only
-            self.ax.plot(component[:, 0], component[:, 1], f'{color}-', linewidth=1.5, label=f'{label} (undeflected)')
-    
-    def create_interactive_elements(self):
-        """Create interactive control points and curves"""
-        self.interactive_artists = []
-        
-        # Plot control points and curves for each active component
-        if self.config.has_flap:
-            self.plot_control_elements('main_slot_flap', 'blue', 'o')
-            self.plot_control_elements('flap', 'red', 's')
-            self.plot_hinge_point('hinge_flap', 'green', 'D')
-        
-        if self.config.has_slat:
-            self.plot_control_elements('main_slot_slat', 'blue', 'o')
-            self.plot_control_elements('slat', 'green', 's')
-            self.plot_hinge_point('hinge_slat', 'orange', 'D')
-    
-    def plot_control_elements(self, element_name: str, color: str, marker: str):
-        """Plot control points and connecting lines for an element"""
-        if element_name not in self.control_points:
+    def plot_results(self):
+        """Plot results flap"""
+        self.ax.clear()
+
+        if self.airfoil_data is None:
+            self.status_label.config(text="Please load an airfoil first!")
             return
         
-        points = self.control_points[element_name]
+        self.ax.plot(self.airfoil_data[:, 0], self.airfoil_data[:, 1], 'k-', linewidth=1, alpha=0.5)
+
+        if self.params['Twist Main'] != 0:
+            self.ax.plot(self.main_component_undeflected[:, 0], self.main_component_undeflected[:, 1], 'k-', linewidth=1, alpha=0.5, label='Original')
+            if self.flap_component_undeflected is not None:
+                self.ax.plot(self.flap_component_undeflected[:, 0], self.flap_component_undeflected[:, 1], 'k-', linewidth=1, alpha=0.5)
+            if self.slat_component_undeflected is not None:
+                self.ax.plot(self.slat_component_undeflected[:, 0], self.slat_component_undeflected[:, 1], 'k-', linewidth=1, alpha=0.5)
         
-        # Define color codes for matplotlib format strings
-        color_codes = {
-            'blue': 'b',
-            'red': 'r',
-            'green': 'g',
-            'orange': 'orange',
-            'purple': 'purple',
-            'cyan': 'c'
-        }
+        if self.main_component is not None:
+            self.main_line = self.ax.plot(self.main_component[:, 0], self.main_component[:, 1], 'b-', linewidth=2.5, label='Main')[0]
         
-        # Define edge colors mapping
-        edge_colors = {
-            'blue': 'navy',
-            'red': 'darkred',
-            'green': 'darkgreen',
-            'orange': 'darkorange',
-            'purple': 'darkviolet',
-            'cyan': 'darkcyan'
-        }
+        if self.flap_component is not None:
+            # Plot deflected flap if deflection is not zero
+            if abs(self.params['Flap Deflection']) > 1e-6:
+                deflected_flap = self.apply_flap_deflection()
+                self.flap_line = self.ax.plot(self.flap_component[:, 0], self.flap_component[:, 1], 'r--', linewidth=1.5, alpha=0.5, label='Flap (undeflected)')[0]
+                self.deflected_flap_line = self.ax.plot(deflected_flap[:, 0], deflected_flap[:, 1], 'r-', linewidth=2.5, label=f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')[0]
+            else:
+                self.flap_line = self.ax.plot(self.flap_component[:, 0], self.flap_component[:, 1], 'r-', linewidth=1.5, label='Flap (undeflected)')[0]
+
+        if self.slat_component is not None:
+            if self.flap_component is None:
+                self.main_slot_slat_curve_line = self.ax.plot(self.main_slot_slat_curve[:, 0], self.main_slot_slat_curve[:, 1], 'b:', linewidth=1.5, alpha=0.7, label='Main Curve')[0]
         
-        color_code = color_codes.get(color, 'k')  # Default to black
-        edge_color = edge_colors.get(color, 'black')
+            # Plot deflected slat if deflection is not zero
+            if abs(self.params['Slat Deflection']) > 1e-6:
+                deflected_slat = self.apply_slat_deflection()
+                self.slat_line = self.ax.plot(self.slat_component[:, 0], self.slat_component[:, 1], 'g--', linewidth=1.5, alpha=0.5, label='Slat (undeflected)')[0]
+                self.deflected_slat_line = self.ax.plot(deflected_slat[:, 0], deflected_slat[:, 1], 'g-', linewidth=2.5, label=f'Slat (deflected {self.params["Slat Deflection"]:.1f}°)')[0]
+            else:
+                self.slat_line = self.ax.plot(self.slat_component[:, 0], self.slat_component[:, 1], 'g-', linewidth=1.5, label='Slat (undeflected)')[0]
+
+        self.create_interactive_points()
         
-        # Plot connecting lines
-        for i in range(len(points) - 1):
-            self.ax.plot([points[i][0], points[i+1][0]], [points[i][1], points[i+1][1]], 
-                        f'{color_code}--', linewidth=0.8, alpha=0.6, zorder=5)
-        
-        # Plot control points
-        for point in points:
-            artist = self.ax.scatter(point[0], point[1], c=color, s=80, marker=marker, 
-                                   edgecolor=edge_color, linewidth=2, zorder=15, alpha=0.9)
-            self.interactive_artists.append((artist, element_name))
-    
-    def plot_hinge_point(self, hinge_name: str, color: str, marker: str):
-        """Plot a hinge point"""
-        if hinge_name not in self.control_points:
-            return
-        
-        # Define edge colors mapping
-        edge_colors = {
-            'blue': 'navy',
-            'red': 'darkred',
-            'green': 'darkgreen',
-            'orange': 'darkorange',
-            'purple': 'darkviolet',
-            'cyan': 'darkcyan'
-        }
-        
-        edge_color = edge_colors.get(color, 'black')
-        
-        point = self.control_points[hinge_name]
-        artist = self.ax.scatter(point[0], point[1], c=color, s=100, marker=marker, 
-                               edgecolor=edge_color, linewidth=2, zorder=15, alpha=0.9)
-        self.interactive_artists.append((artist, hinge_name))
-    
-    def setup_plot_appearance(self):
-        """Setup plot appearance and labels"""
         self.ax.set_xlabel('x/c')
         self.ax.set_ylabel('y/c')
         self.ax.grid(True, alpha=0.3)
         self.ax.axis('equal')
         self.ax.legend()
         self.ax.set_title('Interactive Airfoil-Flap-Slat Designer')
+        
+        self.canvas.draw()
     
-    def update_status(self):
-        """Update status message based on current configuration"""
-        if self.config.has_flap and self.config.has_slat:
-            self.status_label.config(text="Flap and Slat generated! Drag control points to modify")
-        elif self.config.has_flap:
-            self.status_label.config(text="Flap generated! Drag control points to modify")
-        elif self.config.has_slat:
-            self.status_label.config(text="Slat generated! Drag control points to modify")
-        else:
-            self.status_label.config(text="Basic airfoil loaded successfully!")
-    
-    # Mouse event handlers (simplified)
-    def on_mouse_press(self, event):
-        """Handle mouse press events"""
-        if event.inaxes != self.ax or event.button != 1:
-            return
-        
-        # Find nearest control point
-        tolerance = 0.008
-        best_match = None
-        min_distance = float('inf')
-        
-        for element_name, points in self.control_points.items():
-            if isinstance(points, np.ndarray) and points.ndim == 2:
-                for i, point in enumerate(points):
-                    distance = np.sqrt((event.xdata - point[0])**2 + (event.ydata - point[1])**2)
-                    if distance < tolerance and distance < min_distance:
-                        min_distance = distance
-                        best_match = (element_name, i, point)
-            elif isinstance(points, np.ndarray) and points.ndim == 1:
-                distance = np.sqrt((event.xdata - points[0])**2 + (event.ydata - points[1])**2)
-                if distance < tolerance and distance < min_distance:
-                    min_distance = distance
-                    best_match = (element_name, 0, points)
-        
-        if best_match:
-            element_name, point_idx, point = best_match
-            self.dragging_point = (element_name, point_idx)
-            self.drag_offset = (event.xdata - point[0], event.ydata - point[1])
-            self.status_label.config(text=f"Dragging {element_name} point {point_idx+1}")
-    
-    def on_mouse_move(self, event):
-        """Handle mouse move events"""
-        if self.dragging_point is None or event.inaxes != self.ax:
-            return
-        
-        element_name, point_idx = self.dragging_point
-        new_x = event.xdata - self.drag_offset[0]
-        new_y = event.ydata - self.drag_offset[1]
-        
-        # Apply magnetic snap if enabled
-        if self.magnetic_snap:
-            new_x, new_y = self.find_nearest_airfoil_point(new_x, new_y)
-        
-        # Update control point
-        if element_name in self.control_points:
-            if isinstance(self.control_points[element_name], np.ndarray):
-                if self.control_points[element_name].ndim == 2:
-                    self.control_points[element_name][point_idx] = [new_x, new_y]
+    def create_interactive_points(self):
+        """Create interactive control points with better hit detection"""
+        # Clear existing artists and annotations
+        for artist in self.main_slot_flap_artists + self.flap_artists + self.main_slot_slat_artists + self.slat_artists:
+            if artist in self.ax.collections:
+                artist.remove()
+        if self.flap_hinge_artist and self.flap_hinge_artist in self.ax.collections:
+            self.flap_hinge_artist.remove()
+        if self.slat_hinge_artist and self.slat_hinge_artist in self.ax.collections:
+            self.slat_hinge_artist.remove()
+
+        # Clear existing control lines
+        if hasattr(self, 'main_slot_flap_control_lines'):
+            for line in self.main_slot_flap_control_lines:
+                line.remove()
+        if hasattr(self, 'flap_control_lines'):
+            for line in self.flap_control_lines:
+                line.remove()
+        if hasattr(self, 'main_slot_slat_control_lines'):
+            for line in self.main_slot_slat_control_lines:
+                line.remove()
+        if hasattr(self, 'slat_control_lines'):
+            for line in self.slat_control_lines:
+                line.remove()
+
+        for ann in self.point_annotations:
+            ann.remove()
+
+        self.main_slot_flap_artists = []
+        self.flap_artists = []
+        self.main_slot_flap_control_lines = []
+        self.flap_control_lines = []
+        self.point_annotations = []  
+        self.main_slot_slat_artists = []
+        self.slat_artists = []
+        self.main_slot_slat_control_lines = []
+        self.slat_control_lines = []
+
+        if self.flap_type.get() != "None":
+            # Create slot control lines
+            if self.main_slot_flap_control_points is not None:
+                for i in range(len(self.main_slot_flap_control_points) - 1):
+                    x_data = [self.main_slot_flap_control_points[i][0], self.main_slot_flap_control_points[i+1][0]]
+                    y_data = [self.main_slot_flap_control_points[i][1], self.main_slot_flap_control_points[i+1][1]]
+                    line = self.ax.plot(x_data, y_data, 'b--', linewidth=0.8, alpha=0.6, zorder=5)[0]
+                    self.main_slot_flap_control_lines.append(line)
+            
+            # Create flap control lines
+            if self.flap_control_points is not None:
+                for i in range(len(self.flap_control_points) - 1):
+                    x_data = [self.flap_control_points[i][0], self.flap_control_points[i+1][0]]
+                    y_data = [self.flap_control_points[i][1], self.flap_control_points[i+1][1]]
+                    line = self.ax.plot(x_data, y_data, 'r--', linewidth=0.8, alpha=0.6, zorder=5)[0]
+                    self.flap_control_lines.append(line)
+            
+            # Create slot control points
+            if self.main_slot_flap_control_points is not None:
+                for i, point in enumerate(self.main_slot_flap_control_points):
+                    artist = self.ax.scatter(point[0], point[1], c='blue', s=80, marker='o', 
+                                        edgecolor='darkblue', linewidth=2, zorder=15, alpha=0.9)
+                    self.main_slot_flap_artists.append(artist)
+            
+            # Create flap control points
+            if self.flap_control_points is not None:
+                for i, point in enumerate(self.flap_control_points):
+                    artist = self.ax.scatter(point[0], point[1], c='red', s=80, marker='s', 
+                                        edgecolor='darkred', linewidth=2, zorder=15, alpha=0.9)
+                    self.flap_artists.append(artist)
+            
+            # Create hinge point
+            if self.flap_hinge_point is not None:
+                self.flap_hinge_artist = self.ax.scatter(self.flap_hinge_point[0], self.flap_hinge_point[1], 
+                                                c='green', s=100, marker='D', 
+                                                edgecolor='darkgreen', linewidth=2, zorder=15, alpha=0.9)
+
+        if self.slat_type.get() != "None":
+            # Create slot control lines for slat
+            if self.main_slot_slat_control_points is not None:
+                for i in range(len(self.main_slot_slat_control_points) - 1):
+                    x_data = [self.main_slot_slat_control_points[i][0], self.main_slot_slat_control_points[i+1][0]]
+                    y_data = [self.main_slot_slat_control_points[i][1], self.main_slot_slat_control_points[i+1][1]]
+                    line = self.ax.plot(x_data, y_data, 'b--', linewidth=0.8, alpha=0.6, zorder=5)[0]
+                    self.main_slot_slat_control_lines.append(line)
+
+            # Create slat control lines
+            if self.slat_control_points is not None:
+                for i in range(len(self.slat_control_points) - 1):
+                    x_data = [self.slat_control_points[i][0], self.slat_control_points[i+1][0]]
+                    y_data = [self.slat_control_points[i][1], self.slat_control_points[i+1][1]]
+                    line = self.ax.plot(x_data, y_data, 'r--', linewidth=0.8, alpha=0.6, zorder=5)[0]
+                    self.slat_control_lines.append(line)
+
+            # Create slot control points
+            if self.main_slot_slat_control_points is not None:
+                for i, point in enumerate(self.main_slot_slat_control_points):
+                    artist = self.ax.scatter(point[0], point[1], c='blue', s=80, marker='o', 
+                                        edgecolor='darkblue', linewidth=2, zorder=15, alpha=0.9)
+                    self.main_slot_slat_artists.append(artist)
+            
+            # Create slat control points
+            if self.slat_control_points is not None:
+                for i, point in enumerate(self.slat_control_points):
+                    artist = self.ax.scatter(point[0], point[1], c='green', s=80, marker='s', 
+                                        edgecolor='darkgreen', linewidth=2, zorder=15, alpha=0.9)
+                    self.slat_artists.append(artist)
+            
+            # Create hinge point
+            if self.slat_hinge_point is not None:
+                self.slat_hinge_artist = self.ax.scatter(self.slat_hinge_point[0], self.slat_hinge_point[1], 
+                                                c='orange', s=100, marker='D', 
+                                                edgecolor='darkorange', linewidth=2, zorder=15, alpha=0.9)
+
+
+
+
+    def update_curves_and_components(self):
+        """Update curves and components"""
+        try:
+            if self.flap_component is not None:
+                self.main_slot_flap_curve = self.bezier_curve(self.main_slot_flap_control_points)
+                self.flap_curve = self.bezier_curve(self.flap_control_points)
+
+            if self.slat_component is not None:
+                self.main_slot_slat_curve = self.bezier_curve(self.main_slot_slat_control_points)
+                self.slat_curve = self.bezier_curve(self.slat_control_points)
+            
+            # Update parameter values
+            self.params['xh_flap'] = self.flap_hinge_point[0]
+            self.params['yh_flap'] = self.flap_hinge_point[1]
+            self.param_vars['xh_flap'].set(self.flap_hinge_point[0])
+            self.param_vars['yh_flap'].set(self.flap_hinge_point[1])
+
+            self.params['xh_slat'] = self.slat_hinge_point[0]
+            self.params['yh_slat'] = self.slat_hinge_point[1]
+            self.param_vars['xh_slat'].set(self.slat_hinge_point[0])
+            self.param_vars['yh_slat'].set(self.slat_hinge_point[1])
+            
+            self.assemble_components()
+            
+            # Update plot lines
+            if self.main_line:
+                self.main_line.set_data(self.main_component[:, 0], self.main_component[:, 1])
+            if self.flap_line:
+                self.flap_line.set_data(self.flap_component[:, 0], self.flap_component[:, 1])
+            if self.main_slot_flap_curve_line:
+                self.main_slot_flap_curve_line.set_data(self.main_slot_flap_curve[:, 0], self.main_slot_flap_curve[:, 1])
+
+            if self.flap_curve_line:
+                self.flap_curve_line.set_data(self.flap_curve[:, 0], self.flap_curve[:, 1])
+            if self.slat_line:
+                self.slat_line.set_data(self.slat_component[:, 0], self.slat_component[:, 1])
+            
+            if self.main_slot_slat_curve_line:
+                self.main_slot_slat_curve_line.set_data(self.main_slot_slat_curve[:, 0], self.main_slot_slat_curve[:, 1])
+            
+            # Update control lines
+            if hasattr(self, 'main_slot_flap_curve_line') and self.main_slot_flap_control_points is not None:
+                for i, line in enumerate(self.main_slot_flap_control_lines):
+                    if i < len(self.main_slot_flap_control_points) - 1:
+                        x_data = [self.main_slot_flap_control_points[i][0], self.main_slot_flap_control_points[i+1][0]]
+                        y_data = [self.main_slot_flap_control_points[i][1], self.main_slot_flap_control_points[i+1][1]]
+                        line.set_data(x_data, y_data)
+
+            if hasattr(self, 'main_slot_slat_curve_line') and self.main_slot_slat_control_points is not None:
+                for i, line in enumerate(self.main_slot_slat_control_lines):
+                    if i < len(self.main_slot_slat_control_points) - 1:
+                        x_data = [self.main_slot_slat_control_points[i][0], self.main_slot_slat_control_points[i+1][0]]
+                        y_data = [self.main_slot_slat_control_points[i][1], self.main_slot_slat_control_points[i+1][1]]
+                        line.set_data(x_data, y_data)
+            
+            if hasattr(self, 'flap_control_lines') and self.flap_control_points is not None:
+                for i, line in enumerate(self.flap_control_lines):
+                    if i < len(self.flap_control_points) - 1:
+                        x_data = [self.flap_control_points[i][0], self.flap_control_points[i+1][0]]
+                        y_data = [self.flap_control_points[i][1], self.flap_control_points[i+1][1]]
+                        line.set_data(x_data, y_data)
+
+            if hasattr(self, 'slat_control_lines') and self.slat_control_points is not None:
+                for i, line in enumerate(self.slat_control_lines):
+                    if i < len(self.slat_control_points) - 1:
+                        x_data = [self.slat_control_points[i][0], self.slat_control_points[i+1][0]]
+                        y_data = [self.slat_control_points[i][1], self.slat_control_points[i+1][1]]
+                        line.set_data(x_data, y_data)
+            
+            # Update deflected flap line if it exists
+            if hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) > 1e-6:
+                deflected_flap = self.apply_flap_deflection()
+                self.deflected_flap_line.set_data(deflected_flap[:, 0], deflected_flap[:, 1])
+                self.deflected_flap_line.set_label(f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')
+                self.calculate_gap_overlap()
+            elif hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) <= 1e-6:
+                self.deflected_flap_line.remove()
+                delattr(self, 'deflected_flap_line')
+                self.calculate_gap_overlap()
+            elif not hasattr(self, 'deflected_flap_line') and abs(self.params['Flap Deflection']) > 1e-6:
+                deflected_flap = self.apply_flap_deflection()
+                self.deflected_flap_line = self.ax.plot(deflected_flap[:, 0], deflected_flap[:, 1], 'r-', linewidth=2.5, 
+                                                    label=f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')[0]
+                self.calculate_gap_overlap()
+                
+            if hasattr(self, 'deflected_slat_line') and abs(self.params['Slat Deflection']) > 1e-6:
+                deflected_slat = self.apply_slat_deflection()
+                self.deflected_slat_line.set_data(deflected_slat[:, 0], deflected_slat[:, 1])
+                self.deflected_slat_line.set_label(f'Slat (deflected {self.params["Slat Deflection"]:.1f}°)')
+            elif hasattr(self, 'deflected_slat_line') and abs(self.params['Slat Deflection']) <= 1e-6:
+                self.deflected_slat_line.remove()
+                delattr(self, 'deflected_slat_line')
+            elif not hasattr(self, 'deflected_slat_line') and abs(self.params['Slat Deflection']) > 1e-6:
+                deflected_slat = self.apply_slat_deflection()
+                self.deflected_slat_line = self.ax.plot(deflected_slat[:, 0], deflected_slat[:, 1], 'g-', linewidth=2.5, 
+                                                    label=f'Slat (deflected {self.params["Slat Deflection"]:.1f}°)')[0]
+            
+            # Update point annotations
+            for i, ann in enumerate(self.point_annotations):
+                if i < len(self.main_slot_flap_control_points):
+                    ann.set_position(self.main_slot_flap_control_points[i])
+                elif i < len(self.main_slot_flap_control_points) + len(self.flap_control_points):
+                    idx = i - len(self.main_slot_flap_control_points)
+                    ann.set_position(self.flap_control_points[idx])
                 else:
-                    self.control_points[element_name] = np.array([new_x, new_y])
-        
-        self.update_display()
-    
-    def on_mouse_release(self, event):
-        """Handle mouse release events"""
-        if self.dragging_point is not None:
-            self.status_label.config(text="Drag control points to modify shape")
-            self.update_parameters_from_control_points()
-        
-        self.dragging_point = None
-        self.drag_offset = None
-    
+                    ann.set_position(self.flap_hinge_point)
+
+                if i < len(self.main_slot_slat_control_points):
+                    ann.set_position(self.main_slot_slat_control_points[i])
+                elif i < len(self.main_slot_slat_control_points) + len(self.slat_control_points):
+                    idx = i - len(self.main_slot_slat_control_points)
+                    ann.set_position(self.slat_control_points[idx])
+                else:
+                    ann.set_position(self.slat_hinge_point)
+
+            
+            self.canvas.draw_idle()
+            
+        except Exception as e:
+            self.status_label.config(text=f"Error updating: {str(e)}")
+
     def on_mouse_scroll(self, event):
         """Handle mouse scroll for zooming"""
         if event.inaxes != self.ax:
@@ -918,316 +1769,241 @@ class AirfoilDesigner:
         xlim = self.ax.get_xlim()
         ylim = self.ax.get_ylim()
         
-        new_xlim = [(x - event.xdata) * scale_factor + event.xdata for x in xlim]
-        new_ylim = [(y - event.ydata) * scale_factor + event.ydata for y in ylim]
+        x_center = event.xdata
+        y_center = event.ydata
+        
+        new_xlim = [(x - x_center) * scale_factor + x_center for x in xlim]
+        new_ylim = [(y - y_center) * scale_factor + y_center for y in ylim]
         
         self.ax.set_xlim(new_xlim)
         self.ax.set_ylim(new_ylim)
         self.canvas.draw_idle()
-    
-    def find_nearest_airfoil_point(self, x: float, y: float) -> Tuple[float, float]:
-        """Find nearest point on original airfoil for magnetic snap"""
-        if self.airfoil_data is None:
-            return x, y
+
+    def on_mouse_press(self, event):
+        """Handle mouse press with improved hit detection"""
+        if event.inaxes != self.ax:
+            return
         
-        # Create high-resolution interpolation
-        t_original = np.linspace(0, 1, len(self.airfoil_data))
-        t_interp = np.linspace(0, 1, len(self.airfoil_data) * 50)
-        
-        fx = interp1d(t_original, self.airfoil_data[:, 0], kind='linear')
-        fy = interp1d(t_original, self.airfoil_data[:, 1], kind='linear')
-        
-        x_interp = fx(t_interp)
-        y_interp = fy(t_interp)
-        
-        # Find nearest point
-        distances = np.sqrt((x_interp - x)**2 + (y_interp - y)**2)
-        min_idx = np.argmin(distances)
-        
-        if distances[min_idx] < self.snap_tolerance:
-            return x_interp[min_idx], y_interp[min_idx]
-        
-        return x, y
-    
-    def update_display(self):
-        """Update display after control point changes"""
-        try:
-            # Regenerate curves
-            for element_name in ['main_slot_flap', 'flap', 'main_slot_slat', 'slat']:
-                if element_name in self.control_points:
-                    self.curves[element_name] = self.geometry_engine.bezier_curve(self.control_points[element_name])
+        if event.button == 1:
+            tolerance = 0.008
             
-            # Reassemble components
-            self.assemble_components()
+            candidates = []
             
-            # Update plot lines for components
-            self.update_component_lines()
+            # Check main slot flap control points
+            if self.main_slot_flap_control_points is not None:
+                for i, point in enumerate(self.main_slot_flap_control_points):
+                    distance = np.sqrt((event.xdata - point[0])**2 + (event.ydata - point[1])**2)
+                    if distance < tolerance:
+                        candidates.append((distance, 'main_slot_flap', i, point))
             
-            # Update interactive elements
-            self.update_interactive_elements()
+            # Check flap control points
+            if self.flap_control_points is not None:
+                for i, point in enumerate(self.flap_control_points):
+                    distance = np.sqrt((event.xdata - point[0])**2 + (event.ydata - point[1])**2)
+                    if distance < tolerance:
+                        candidates.append((distance, 'flap', i, point))
             
-            # Update control lines
-            self.update_control_lines()
+            # Check hinge point
+            if self.flap_hinge_point is not None:
+                distance = np.sqrt((event.xdata - self.flap_hinge_point[0])**2 + (event.ydata - self.flap_hinge_point[1])**2)
+                if distance < tolerance:
+                    candidates.append((distance, 'hinge_flap', 0, self.flap_hinge_point))
+
+            # Check slat control points 
+            if self.main_slot_slat_control_points is not None:
+                for i, point in enumerate(self.main_slot_slat_control_points):
+                    distance = np.sqrt((event.xdata - point[0])**2 + (event.ydata - point[1])**2)
+                    if distance < tolerance:
+                        candidates.append((distance, 'main_slot_slat', i, point))
+
+            # Check slat flap control points
+            if self.slat_control_points is not None:
+                for i, point in enumerate(self.slat_control_points):
+                    distance = np.sqrt((event.xdata - point[0])**2 + (event.ydata - point[1])**2)
+                    if distance < tolerance:
+                        candidates.append((distance, 'slat', i, point))
+
+            # Check hinge point for slat
+            if self.slat_hinge_point is not None:
+                distance = np.sqrt((event.xdata - self.slat_hinge_point[0])**2 + (event.ydata - self.slat_hinge_point[1])**2)
+                if distance < tolerance:
+                    candidates.append((distance, 'hinge_slat', 0, self.slat_hinge_point))
             
-            # Recalculate gap/overlap if needed
-            if self.config.has_flap:
-                self.calculate_gap_overlap()
-            
-            self.canvas.draw_idle()
-            
-        except Exception as e:
-            self.status_label.config(text=f"Error updating display: {e}")
-    
-    def update_component_lines(self):
-        """Update the main component lines on the plot"""
-        # Find and update main component line
-        for line in self.ax.lines:
-            if line.get_label() == 'Main' and self.components.get('main') is not None:
-                line.set_data(self.components['main'][:, 0], self.components['main'][:, 1])
-            elif 'Flap' in line.get_label() and self.components.get('flap') is not None:
-                if 'undeflected' in line.get_label():
-                    line.set_data(self.components['flap'][:, 0], self.components['flap'][:, 1])
-                elif 'deflected' in line.get_label():
-                    deflected = self.apply_deflection('flap')
-                    if deflected is not None:
-                        line.set_data(deflected[:, 0], deflected[:, 1])
-                        # Update label with current deflection
-                        line.set_label(f'Flap (deflected {self.params["Flap Deflection"]:.1f}°)')
-            elif 'Slat' in line.get_label() and self.components.get('slat') is not None:
-                if 'undeflected' in line.get_label():
-                    line.set_data(self.components['slat'][:, 0], self.components['slat'][:, 1])
-                elif 'deflected' in line.get_label():
-                    deflected = self.apply_deflection('slat')
-                    if deflected is not None:
-                        line.set_data(deflected[:, 0], deflected[:, 1])
-                        # Update label with current deflection
-                        line.set_label(f'Slat (deflected {self.params["Slat Deflection"]:.1f}°)')
-        
-        # Update legend
-        self.ax.legend()
-    
-    def update_control_lines(self):
-        """Update control point connecting lines"""
-        # Remove old control lines
-        lines_to_remove = []
-        for line in self.ax.lines:
-            if line.get_linestyle() == '--' and line.get_alpha() == 0.6:
-                lines_to_remove.append(line)
-        
-        for line in lines_to_remove:
-            line.remove()
-        
-        # Redraw control lines
-        self.draw_control_lines()
-    
-    def draw_control_lines(self):
-        """Draw control point connecting lines"""
-        # Color codes for lines
-        color_codes = {
-            'blue': 'b',
-            'red': 'r',
-            'green': 'g',
-            'orange': 'orange',
-            'purple': 'purple',
-            'cyan': 'c'
-        }
-        
-        # Draw lines for active components
-        if self.config.has_flap:
-            # Main slot flap lines
-            if 'main_slot_flap' in self.control_points:
-                points = self.control_points['main_slot_flap']
-                for i in range(len(points) - 1):
-                    self.ax.plot([points[i][0], points[i+1][0]], [points[i][1], points[i+1][1]], 
-                                'b--', linewidth=0.8, alpha=0.6, zorder=5)
-            
-            # Flap lines
-            if 'flap' in self.control_points:
-                points = self.control_points['flap']
-                for i in range(len(points) - 1):
-                    self.ax.plot([points[i][0], points[i+1][0]], [points[i][1], points[i+1][1]], 
-                                'r--', linewidth=0.8, alpha=0.6, zorder=5)
-        
-        if self.config.has_slat:
-            # Main slot slat lines
-            if 'main_slot_slat' in self.control_points:
-                points = self.control_points['main_slot_slat']
-                for i in range(len(points) - 1):
-                    self.ax.plot([points[i][0], points[i+1][0]], [points[i][1], points[i+1][1]], 
-                                'b--', linewidth=0.8, alpha=0.6, zorder=5)
-            
-            # Slat lines
-            if 'slat' in self.control_points:
-                points = self.control_points['slat']
-                for i in range(len(points) - 1):
-                    self.ax.plot([points[i][0], points[i+1][0]], [points[i][1], points[i+1][1]], 
-                                'g--', linewidth=0.8, alpha=0.6, zorder=5)
-    
-    def update_interactive_elements(self):
-        """Update positions of interactive elements"""
-        for artist, element_name in self.interactive_artists:
-            if element_name in self.control_points:
-                points = self.control_points[element_name]
-                if isinstance(points, np.ndarray):
-                    if points.ndim == 2:
-                        artist.set_offsets(points)
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                distance, point_type, point_idx, point = candidates[0]
+                
+                self.dragging_point = (point_type, point_idx)
+                self.drag_offset = (event.xdata - point[0], event.ydata - point[1])
+                
+                if point_type == 'main_slot_flap':
+                    if point_idx == 0:
+                        self.status_label.config(text="Dragging Slot Start (constrained to lower surface)")
+                    elif point_idx == 1:
+                        self.status_label.config(text="Dragging Second Control Point (constrained to lower surface)")
                     else:
-                        artist.set_offsets([points])
-    
-    def update_parameters_from_control_points(self):
-        """Update parameters based on current control point positions"""
-        try:
-            # This is a simplified version - in practice, you'd need to reverse-engineer
-            # the parameter values from the control point positions
-            for element_name, points in self.control_points.items():
-                if element_name == 'hinge_flap':
-                    self.params['xh_flap'] = points[0]
-                    self.params['yh_flap'] = points[1]
-                elif element_name == 'hinge_slat':
-                    self.params['xh_slat'] = points[0]
-                    self.params['yh_slat'] = points[1]
+                        self.status_label.config(text=f"Dragging Main Point {point_idx+1}")
+                elif point_type == 'flap':
+                    if point_idx == 0:
+                        self.status_label.config(text="Dragging Flap Leading Edge (constrained to upper surface)")
+                    elif point_idx == 1:
+                        self.status_label.config(text="Dragging Flap Point 2 (constrained to upper surface)")
+                    elif point_idx == 4:
+                        self.status_label.config(text="Dragging Flap Point 5 (constrained to lower surface)")
+                    elif point_idx == 5:
+                        self.status_label.config(text="Dragging Flap Trailing Edge (constrained to lower surface)")
+                    else:
+                        self.status_label.config(text=f"Dragging Flap Point {point_idx+1}")
+                elif point_type == 'hinge_flap':
+                    self.status_label.config(text="Dragging Hinge Point")
+                elif point_type == 'main_slot_slat':
+                    self.status_label.config(text=f"Dragging Main Slot Slat Point {point_idx+1}")
+                elif point_type == 'slat':
+                    self.status_label.config(text=f"Dragging Slat Point {point_idx+1}")
+                elif point_type == 'hinge_slat':
+                    self.status_label.config(text="Dragging Hinge Slat Point")
+                return
             
-            self.update_parameter_tree()
-            
-        except Exception as e:
-            self.status_label.config(text=f"Error updating parameters: {e}")
-    
-    def update_parameter_tree(self):
-        """Update parameter tree with current values"""
-        for item_id, param_name in self.tree_item_to_param.items():
-            if param_name in self.params:
-                value = self.params[param_name]
-                if param_name in self.param_vars:
-                    self.param_vars[param_name].set(value)
-                self.param_tree.set(item_id, 'Value', f'{value:.6f}')
-    
-    # Tree event handlers
-    def on_tree_double_click(self, event):
-        """Handle double-click on tree items for inline editing"""
-        item = self.param_tree.selection()[0] if self.param_tree.selection() else None
-        if not item or item not in self.tree_item_to_param:
+        elif event.button == 3:
+            # Right click -> pan
+            self.is_panning = True
+            self.pan_start = (event.xdata, event.ydata)
+            self.pan_xlim = self.ax.get_xlim()
+            self.pan_ylim = self.ax.get_ylim()
+            self.status_label.config(text="Panning view")
+
+    def on_mouse_move(self, event):
+        """Handle mouse move for point dragging"""
+        if (self.dragging_point is None and self.pan_start is None) or event.inaxes != self.ax:
             return
         
-        bbox = self.param_tree.bbox(item, 'Value')
-        if not bbox:
-            return
-        
-        param_name = self.tree_item_to_param[item]
-        current_value = self.param_vars[param_name].get()
-        
-        # Create inline editor
-        self.edit_var = tk.DoubleVar(value=current_value)
-        self.edit_entry = ttk.Entry(self.param_tree, textvariable=self.edit_var, width=10)
-        self.edit_entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
-        
-        self.edit_entry.select_range(0, tk.END)
-        self.edit_entry.focus()
-        
-        self.editing_item = item
-        self.editing_param = param_name
-        
-        # Bind completion events
-        self.edit_entry.bind('<Return>', self.finish_edit)
-        self.edit_entry.bind('<Escape>', self.cancel_edit)
-        self.edit_entry.bind('<FocusOut>', self.finish_edit)
-    
-    def finish_edit(self, event=None):
-        """Finish inline editing"""
-        if not hasattr(self, 'edit_entry'):
-            return
-        
-        try:
-            new_value = self.edit_var.get()
+        if self.dragging_point is not None and event.button == 1:
+            curve_type, point_idx = self.dragging_point
+            new_x = event.xdata - self.drag_offset[0]
+            new_y = event.ydata - self.drag_offset[1]
             
-            # Update parameter
-            self.param_vars[self.editing_param].set(new_value)
-            self.params[self.editing_param] = new_value
+            # Apply magnetic snap if active
+            if self.magnetic_snap:
+                new_x, new_y = self.find_nearest_airfoil_point(new_x, new_y)
             
-            # Update tree display
-            self.param_tree.set(self.editing_item, 'Value', f'{new_value:.6f}')
+            # Update control point
+            if curve_type == 'main_slot_flap':
+                # Special handling for points x1 and x2 (indices 0 and 1) - constrain to lower surface
+                if point_idx == 0 or point_idx == 1:
+                    # Only allow X movement, Y is calculated from airfoil
+                    self.main_slot_flap_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_lower') and self.f_lower is not None:
+                        calculated_y = self.f_lower(new_x)
+                        self.main_slot_flap_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                else:
+                    # Normal movement for other points
+                    self.main_slot_flap_control_points[point_idx] = [new_x, new_y]
+                
+                # Update corresponding scatter plot
+                self.main_slot_flap_artists[point_idx].set_offsets([[new_x, new_y]])
+                
+            elif curve_type == 'flap':
+                # Special handling for flap points that should be on airfoil surfaces
+                if point_idx == 0 or point_idx == 1:  # x7, x8 on upper surface
+                    self.flap_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_upper') and self.f_upper is not None:
+                        calculated_y = self.f_upper(new_x)
+                        self.flap_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                elif point_idx == 4 or point_idx == 5:  # x11, x12 on lower surface
+                    self.flap_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_lower') and self.f_lower is not None:
+                        calculated_y = self.f_lower(new_x)
+                        self.flap_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                else:
+                    # Normal movement for other points
+                    self.flap_control_points[point_idx] = [new_x, new_y]
+                
+                self.flap_artists[point_idx].set_offsets([[new_x, new_y]])
+                
+            elif curve_type == 'hinge_flap':
+                self.flap_hinge_point = np.array([new_x, new_y])
+                self.flap_hinge_artist.set_offsets([[new_x, new_y]])
+            elif curve_type == 'main_slot_slat':
+                # Special handling for main slot slat points
+                if point_idx == 0 or point_idx == 1:  # x13, x14 on upper surface
+                    self.main_slot_slat_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_upper') and self.f_upper is not None:
+                        calculated_y = self.f_upper(new_x)
+                        self.main_slot_slat_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                elif point_idx == 4 or point_idx == 5:  # x17, x18 on lower surface
+                    self.main_slot_slat_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_lower') and self.f_lower is not None:
+                        calculated_y = self.f_lower(new_x)
+                        self.main_slot_slat_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                else:
+                    # Normal movement for other points
+                    self.main_slot_slat_control_points[point_idx] = [new_x, new_y]
+
+                self.main_slot_slat_artists[point_idx].set_offsets([[new_x, new_y]])
+
+            elif curve_type == 'slat':
+                # Special handling for slat points that should be on airfoil surfaces
+                if point_idx == 0 or point_idx == 1:  # x19, x20 on lower surface
+                    self.slat_control_points[point_idx][0] = new_x
+                    if hasattr(self, 'f_lower') and self.f_lower is not None:
+                        calculated_y = self.f_lower(new_x)
+                        self.slat_control_points[point_idx][1] = calculated_y
+                        new_y = calculated_y
+                else:
+                    # Normal movement for other points
+                    self.slat_control_points[point_idx] = [new_x, new_y]
+
+                self.slat_artists[point_idx].set_offsets([[new_x, new_y]])
+            elif curve_type == 'hinge_slat':
+                self.slat_hinge_point = np.array([new_x, new_y])
+                self.slat_hinge_artist.set_offsets([[new_x, new_y]])
             
-            # Update components
-            self.generate_components()
-            self.plot_results()
-            
-        except tk.TclError:
-            pass
+            # Update curves and components
+            self.update_curves_and_components()
+
+        elif hasattr(self, 'pan_start') and self.pan_start is not None and self.is_panning and self.pan_xlim is not None and self.pan_ylim is not None:
+            # Pan handling
+            dx = event.xdata - self.pan_start[0]
+            dy = event.ydata - self.pan_start[1]
+
+            new_xlim = [x - dx for x in self.pan_xlim]
+            new_ylim = [y - dy for y in self.pan_ylim]
+
+            self.ax.set_xlim(new_xlim)
+            self.ax.set_ylim(new_ylim)
+
+
+    def on_mouse_release(self, event):
+        """Handle mouse release"""
+        if self.dragging_point is not None:
+            self.status_label.config(text="Drag control points to modify shape")
+        self.dragging_point = None
+        self.drag_offset = None
+
+        if self.is_panning:
+            self.canvas.draw_idle()
+            self.is_panning = False
+            self.pan_start = None
+            self.pan_xlim = None
+            self.pan_ylim = None
+            self.status_label.config(text="Drag control points to modify shape")
         
-        self.cancel_edit()
-    
-    def cancel_edit(self, event=None):
-        """Cancel inline editing"""
-        if hasattr(self, 'edit_entry'):
-            self.edit_entry.destroy()
-            delattr(self, 'edit_entry')
-            delattr(self, 'edit_var')
-            delattr(self, 'editing_item')
-            delattr(self, 'editing_param')
-    
-    def on_tree_select(self, event):
-        """Handle tree selection to show parameter details"""
-        selection = self.param_tree.selection()
-        if not selection:
-            return
-        
-        item = selection[0]
-        
-        if item in self.tree_item_to_param:
-            param_name = self.tree_item_to_param[item]
-            self.param_name_label.config(text=f"Parameter: {param_name}")
-            
-            # Update description
-            self.param_desc_text.config(state='normal')
-            self.param_desc_text.delete(1.0, tk.END)
-            self.param_desc_text.insert(1.0, self.param_manager.descriptions.get(param_name, "No description available"))
-            self.param_desc_text.config(state='disabled')
-        else:
-            # Category selected
-            category_name = self.param_tree.item(item, 'text')
-            self.param_name_label.config(text=f"Category: {category_name}")
-            self.param_desc_text.config(state='normal')
-            self.param_desc_text.delete(1.0, tk.END)
-            self.param_desc_text.insert(1.0, f"Select a parameter from the {category_name} category to edit its value.")
-            self.param_desc_text.config(state='disabled')
-    
-    # Utility methods
-    def update_parameters(self):
-        """Update all parameters and regenerate components"""
-        try:
-            self.generate_components()
-            self.plot_results()
-            self.status_label.config(text="Parameters updated successfully!")
-        except Exception as e:
-            self.status_label.config(text=f"Error updating parameters: {e}")
-    
-    def toggle_magnetic_snap(self):
-        """Toggle magnetic snap functionality"""
-        self.magnetic_snap = not self.magnetic_snap
-        if self.magnetic_snap:
-            self.magnet_button.config(text="🧲 Snap ON")
-            self.status_label.config(text="Magnetic snap ON - Points will snap to original airfoil")
-        else:
-            self.magnet_button.config(text="🧲 Snap OFF")
-            self.status_label.config(text="Magnetic snap OFF")
+        self.update_parameters_from_sketch()
+        self.update_parameters()
     
     def reset_view(self):
-        """Reset plot view to fit all data"""
+        """Reset the plot view"""
         self.ax.relim()
         self.ax.autoscale()
         self.canvas.draw()
     
-    def restart_app(self):
-        """Restart the application"""
-        self.root.destroy()
-        main()
-    
-    def quit_program(self):
-        """Quit the application"""
-        self.root.destroy()
-    
-    # Configuration save/load
-    def save_config(self):
-        """Save current configuration to file"""
+    def save_parameters(self):
+        """Save current parameters and control points to file"""
         filename = filedialog.asksaveasfilename(
             title="Save Configuration",
             defaultextension=".json",
@@ -1237,28 +2013,33 @@ class AirfoilDesigner:
         if filename:
             try:
                 config = {
-                    'parameters': self.params,
-                    'control_points': {k: v.tolist() if isinstance(v, np.ndarray) else v 
-                                     for k, v in self.control_points.items()},
-                    'configuration': {
-                        'flap_type': self.config.flap_type,
-                        'slat_type': self.config.slat_type,
-                        'has_flap': self.config.has_flap,
-                        'has_slat': self.config.has_slat
-                    },
+                    'parameters': self.params.copy(),
+                    'main_slot_flap_control_points': self.main_slot_flap_control_points.tolist() if self.main_slot_flap_control_points is not None else None,
+                    'flap_control_points': self.flap_control_points.tolist() if self.flap_control_points is not None else None,
+                    'hinge_point_flap': self.flap_hinge_point.tolist() if self.flap_hinge_point is not None else None,
+                    'main_slot_slat_control_points': self.main_slot_slat_control_points.tolist() if self.main_slot_slat_control_points is not None else None,
+                    'slat_control_points': self.slat_control_points.tolist() if self.slat_control_points is not None else None,
+                    'hinge_point_slat': self.slat_hinge_point.tolist() if self.slat_hinge_point is not None else None,
                     'magnetic_snap': self.magnetic_snap
                 }
                 
+                # Converti tutti i valori numpy nei parametri
+                for key, value in config['parameters'].items():
+                    if isinstance(value, np.ndarray):
+                        config['parameters'][key] = value.tolist()
+                    elif isinstance(value, (np.int64, np.int32)):
+                        config['parameters'][key] = int(value)
+                    elif isinstance(value, (np.float64, np.float32)):
+                        config['parameters'][key] = float(value)
+                
                 with open(filename, 'w') as f:
                     json.dump(config, f, indent=2)
-                
                 self.status_label.config(text="Configuration saved successfully!")
-                
             except Exception as e:
-                messagebox.showerror("Error", f"Error saving configuration: {e}")
+                messagebox.showerror("Error", f"Error saving configuration: {str(e)}")
     
-    def load_config(self):
-        """Load configuration from file"""
+    def load_parameters(self):
+        """Load parameters and control points from file"""
         filename = filedialog.askopenfilename(
             title="Load Configuration",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
@@ -1274,229 +2055,51 @@ class AirfoilDesigner:
                     self.params.update(config['parameters'])
                 
                 # Update control points
-                if 'control_points' in config:
-                    for key, value in config['control_points'].items():
-                        if isinstance(value, list):
-                            self.control_points[key] = np.array(value)
-                        else:
-                            self.control_points[key] = value
-                
-                # Update configuration
-                if 'configuration' in config:
-                    cfg = config['configuration']
-                    self.config.flap_type = cfg.get('flap_type', 'Fowler')
-                    self.config.slat_type = cfg.get('slat_type', 'Kruger')
-                    self.config.has_flap = cfg.get('has_flap', True)
-                    self.config.has_slat = cfg.get('has_slat', True)
-                
-                # Update magnetic snap
+                if config.get('main_slot_flap_control_points') is not None:
+                    self.main_slot_flap_control_points = np.array(config['main_slot_flap_control_points'])
+                if config.get('flap_control_points') is not None:
+                    self.flap_control_points = np.array(config['flap_control_points'])
+                if config.get('hinge_point_flap') is not None:
+                    self.flap_hinge_point = np.array(config['hinge_point_flap'])
+                if config.get('main_slot_slat_control_points') is not None:
+                    self.main_slot_slat_control_points = np.array(config['main_slot_slat_control_points'])
+                if config.get('slat_control_points') is not None:
+                    self.slat_control_points = np.array(config['slat_control_points'])
+                if config.get('hinge_point_slat') is not None:
+                    self.slat_hinge_point = np.array(config['hinge_point_slat'])
+
                 if 'magnetic_snap' in config:
                     self.magnetic_snap = config['magnetic_snap']
-                    self.toggle_magnetic_snap()
-                    self.toggle_magnetic_snap()  # Reset to correct state
+                    if self.magnetic_snap:
+                        self.magnet_style.configure("Active.TButton", background="lightgreen")
+                        self.magnet_button.config(style="Active.TButton")
+                    else:
+                        self.magnet_button.config(style="TButton")
                 
-                # Regenerate curves and components
-                for element_name in ['main_slot_flap', 'flap', 'main_slot_slat', 'slat']:
-                    if element_name in self.control_points:
-                        self.curves[element_name] = self.geometry_engine.bezier_curve(self.control_points[element_name])
-                
-                self.update_parameters()
+                # Update curves first
+                self.main_slot_flap_curve = self.bezier_curve(self.main_slot_flap_control_points)
+                self.flap_curve = self.bezier_curve(self.flap_control_points)
+                self.main_slot_slat_curve = self.bezier_curve(self.main_slot_slat_control_points)
+                self.slat_curve = self.bezier_curve(self.slat_control_points)
                 self.assemble_components()
-                self.update_parameter_tree()
+                
+                # Update parameters from the loaded points
+                self.update_parameters_from_sketch()
+                
+                # Plot results
                 self.plot_results()
                 
                 self.status_label.config(text="Configuration loaded successfully!")
-                
             except Exception as e:
-                messagebox.showerror("Error", f"Error loading configuration: {e}")
-    
-    # Export functionality
-    def export_data(self):
-        """Open export dialog"""
-        if self.components.get('main') is None:
-            messagebox.showwarning("Warning", "No data to export. Please generate components first!")
-            return
-        
-        ExportDialog(self.root, self)
-    
-    def export_to_csv(self, filename: str, export_options: Dict[str, Any]):
-        """Export components to CSV file"""
-        with open(filename, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            
-            for component_name in ['slat', 'main', 'flap']:
-                if not export_options.get(f'export_{component_name}', False):
-                    continue
-                
-                component = self.components.get(component_name)
-                if component is None:
-                    continue
-                
-                # Apply deflection if needed
-                if component_name in ['flap', 'slat']:
-                    deflected = self.apply_deflection(component_name)
-                    if deflected is not None:
-                        component = deflected
-                
-                # Resample
-                n_points = export_options.get(f'{component_name}_points', 100)
-                resampled = self.geometry_engine.resample_curve(component, n_points)
-                
-                # Write to CSV
-                writer.writerow([])
-                writer.writerow([f'{component_name.title()} coords (x,y,z)'])
-                for point in resampled:
-                    writer.writerow([point[0], point[1], 0.0])
-    
-    def export_to_excel(self, filename: str, export_options: Dict[str, Any]):
-        """Export components to Excel file"""
-        data = {'x': [], 'y': [], 'z': []}
-        
-        for component_name in ['slat', 'main', 'flap']:
-            if not export_options.get(f'export_{component_name}', False):
-                continue
-            
-            component = self.components.get(component_name)
-            if component is None:
-                continue
-            
-            # Apply deflection if needed
-            if component_name in ['flap', 'slat']:
-                deflected = self.apply_deflection(component_name)
-                if deflected is not None:
-                    component = deflected
-            
-            # Resample
-            n_points = export_options.get(f'{component_name}_points', 100)
-            resampled = self.geometry_engine.resample_curve(component, n_points)
-            
-            # Add to data
-            data['x'].extend(['', f'{component_name.title()} coords (x,y,z)', ''])
-            data['y'].extend(['', '', ''])
-            data['z'].extend(['', '', ''])
-            
-            for point in resampled:
-                data['x'].append(point[0])
-                data['y'].append(point[1])
-                data['z'].append(0.0)
-        
-        # Create DataFrame and save
-        df = pd.DataFrame.from_dict(data, orient='index').transpose()
-        df.to_excel(filename, index=False, header=False)
-
-class ExportDialog:
-    """Dialog for export settings"""
-    
-    def __init__(self, parent, designer):
-        self.parent = parent
-        self.designer = designer
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Export Settings")
-        self.dialog.geometry("300x350")
-        self.dialog.resizable(False, False)
-        
-        self.setup_dialog()
-    
-    def setup_dialog(self):
-        """Setup export dialog interface"""
-        frame = ttk.Frame(self.dialog, padding=10)
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        # File format selection
-        ttk.Label(frame, text="Export Format:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        self.file_format = tk.StringVar(value="CSV")
-        format_combo = ttk.Combobox(frame, values=["CSV", "XLSX"], state='readonly', textvariable=self.file_format)
-        format_combo.pack(anchor='w', pady=(0, 20))
-        
-        # Component selection
-        ttk.Label(frame, text="Export Components:", font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0, 5))
-        
-        self.export_vars = {}
-        self.point_vars = {}
-        
-        components = [
-            ('slat', 'Slat', 75, self.designer.config.has_slat),
-            ('main', 'Main', 150, True),
-            ('flap', 'Flap', 75, self.designer.config.has_flap)
-        ]
-        
-        for comp_name, comp_label, default_points, enabled in components:
-            # Checkbox
-            var = tk.BooleanVar(value=enabled)
-            self.export_vars[comp_name] = var
-            check = ttk.Checkbutton(frame, text=f"Export {comp_label}", variable=var, state='normal' if enabled else 'disabled')
-            check.pack(anchor='w', pady=2)
-            
-            # Points entry
-            points_frame = ttk.Frame(frame)
-            points_frame.pack(fill='x', pady=2)
-            
-            label = ttk.Label(points_frame, text=f"{comp_label} points:")
-            label.pack(side='left')
-            
-            points_var = tk.IntVar(value=default_points)
-            self.point_vars[comp_name] = points_var
-            entry = ttk.Entry(points_frame, textvariable=points_var, width=8, state='normal' if enabled else 'disabled')
-            entry.pack(side='right')
-        
-        # Buttons
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill='x', pady=(30, 0))
-        
-        ttk.Button(btn_frame, text="Export", command=self.perform_export).pack(side='right', padx=(5, 0))
-        ttk.Button(btn_frame, text="Cancel", command=self.dialog.destroy).pack(side='right')
-    
-    def perform_export(self):
-        """Perform the export operation"""
-        # Collect export options
-        export_options = {}
-        for comp_name, var in self.export_vars.items():
-            export_options[f'export_{comp_name}'] = var.get()
-        
-        for comp_name, var in self.point_vars.items():
-            export_options[f'{comp_name}_points'] = var.get()
-        
-        # Check if at least one component is selected
-        if not any(export_options[f'export_{comp}'] for comp in ['slat', 'main', 'flap']):
-            messagebox.showwarning("Warning", "Please select at least one component to export!")
-            return
-        
-        # Get filename
-        file_format = self.file_format.get()
-        if file_format == "CSV":
-            filename = filedialog.asksaveasfilename(
-                title="Export to CSV",
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
-            )
-        else:
-            filename = filedialog.asksaveasfilename(
-                title="Export to Excel",
-                defaultextension=".xlsx",
-                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
-            )
-        
-        if filename:
-            try:
-                if file_format == "CSV":
-                    self.designer.export_to_csv(filename, export_options)
-                else:
-                    self.designer.export_to_excel(filename, export_options)
-                
-                self.dialog.destroy()
-                self.designer.status_label.config(text="Export completed successfully!")
-                
-            except Exception as e:
-                messagebox.showerror("Error", f"Export failed: {e}")
+                messagebox.showerror("Error", f"Error loading configuration: {str(e)}")
 
 
 def main():
-    """Main entry point"""
     root = tk.Tk()
-    app = AirfoilDesigner(root)
+    app = AirfoilFlapDesigner(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
     main()
+
